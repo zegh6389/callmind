@@ -95,6 +95,7 @@ class CallSession:
         )
         self._preroll: deque[np.ndarray] = deque(maxlen=settings.vad_preroll_frames)
         self._speech_chunks: list[np.ndarray] = []
+        self._parked_utterance: np.ndarray | None = None
         self._frame_leftover = b""
         self._send_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._cancel = asyncio.Event()
@@ -182,10 +183,11 @@ class CallSession:
         duration_ms = len(utterance8k) * 1000 // TELEPHONY_RATE
         if duration_ms < self.settings.vad_min_speech_ms:
             return
-        if self._response_task and not self._response_task.done():
-            log.debug("utterance dropped: response already running")
-            return
         utterance16k = resample(utterance8k, TELEPHONY_RATE, STT_RATE)
+        if self._response_task and not self._response_task.done():
+            log.debug("utterance parked: response already running")
+            self._parked_utterance = utterance16k
+            return
         self._response_task = asyncio.create_task(self._respond_audio(utterance16k))
 
     def _start_response_text(self, text: str) -> None:
@@ -303,6 +305,11 @@ class CallSession:
                 self.memory.append_message(self.call_id, "assistant", reply)
                 log.info("agent: %s", reply)
             self.state = "listening"
+            if not self._cancel.is_set():
+                parked = self._parked_utterance
+                self._parked_utterance = None
+                if parked is not None and self._response_task is asyncio.current_task():
+                    await self._respond_audio(parked)
 
     def _messages(self, user_text: str, rag_context: str | None) -> list[dict[str, str]]:
         system = SYSTEM_PROMPT
@@ -336,6 +343,7 @@ class CallSession:
     def _barge_in(self) -> None:
         log.info("barge-in: caller spoke over agent")
         self._cancel.set()
+        self._parked_utterance = None
         self.state = "listening"
         if self._response_task and not self._response_task.done():
             self._response_task.cancel()

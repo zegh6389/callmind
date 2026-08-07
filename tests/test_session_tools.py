@@ -28,13 +28,16 @@ class StubLLM:
     plain strings for "return this verbatim".
     """
 
-    def __init__(self, replies: list) -> None:
+    def __init__(self, replies: list, delay: float = 0.0) -> None:
         self._replies = list(replies)
         self._i = 0
         self.call_log: list[list[dict]] = []
+        self.delay = delay
 
     async def stream_chat(self, messages, temperature=None, max_tokens=None) -> AsyncIterator[str]:
         self.call_log.append(list(messages))
+        if self.delay:
+            await asyncio.sleep(self.delay)
         item = self._replies[self._i % len(self._replies)]
         self._i += 1
         text = item if isinstance(item, str) else item.get("text", "")
@@ -131,6 +134,43 @@ class FakeWS:
 
     async def close(self, code: int = 1000):
         self.closed = True
+
+
+def test_utterance_parked_while_previous_response_busy(settings):
+    llm = StubLLM([
+        '{"intent":"smalltalk","confidence":0.9}',
+        "First reply text",
+        '{"intent":"smalltalk","confidence":0.9}',
+        "Second reply text",
+    ], delay=0.1)
+    stt = StubSTT("hello agent")  # same text both utterances
+    tts = StubTTS()
+    ws = FakeWS()
+    ws.to_send = [
+        {"event": "start", "start": {"call_control_id": "c1", "from": "+15551111111", "to": "+15550000"}},
+    ]
+    session = CallSession(
+        ws=ws, adapter=StubAdapter(), settings=settings,
+        stt=stt, llm=llm, tts=tts, embeddings=StubEmbeddings(),
+    )
+
+    async def run():
+        await session._receive_loop()
+        session._vad.reset()
+        _push_audio(session)
+        _push_silence(session)
+        first_task = session._response_task
+        session._vad.reset()
+        _push_audio(session)
+        _push_silence(session)
+        assert first_task is not None and not first_task.done()
+        await asyncio.wait_for(first_task, timeout=2.0)
+        await asyncio.sleep(0.1)  # parked utterance drains synchronously after
+
+    asyncio.run(run())
+    joined = " ".join(tts.spoken).lower()
+    assert "first reply text" in joined
+    assert "second reply text" in joined
 
 
 def test_session_closes_websocket_when_done(settings):
