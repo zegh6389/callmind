@@ -97,7 +97,7 @@ class CallSession:
         self._speech_chunks: list[np.ndarray] = []
         self._parked_utterance: np.ndarray | None = None
         self._frame_leftover = b""
-        self._send_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._send_queue: asyncio.Queue[tuple[str, bytes | None]] = asyncio.Queue()
         self._cancel = asyncio.Event()
         self._response_task: asyncio.Task | None = None
         self._sender_task: asyncio.Task | None = None
@@ -334,7 +334,7 @@ class CallSession:
                         return
                     if self.state != "speaking":
                         self.state = "speaking"
-                    await self._send_queue.put(frame)
+                    await self._send_queue.put(("media", frame))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -354,15 +354,21 @@ class CallSession:
                 break
         clear = self.adapter.clear_message()
         if clear is not None:
-            asyncio.create_task(self.ws.send_json(clear))
+            self._send_queue.put_nowait(("clear", None))
 
     async def _sender_loop(self) -> None:
         try:
             while True:
-                frame = await self._send_queue.get()
+                kind, payload = await self._send_queue.get()
+                if kind == "clear":
+                    clear = self.adapter.clear_message()
+                    if clear is not None:
+                        await self.ws.send_json(clear)
+                    continue
                 if self._cancel.is_set():
                     continue
-                await self.ws.send_json(self.adapter.media_message(frame, self._seq))
+                assert payload is not None  # media frame bytes
+                await self.ws.send_json(self.adapter.media_message(payload, self._seq))
                 self._seq += 1
                 await asyncio.sleep(FRAME_SECONDS)
         except asyncio.CancelledError:

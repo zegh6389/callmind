@@ -191,6 +191,30 @@ def test_speech_start_captures_preroll_and_frame_once(settings):
     assert sum(1 for v in loud_frames if v > 5000) == 1
 
 
+def test_barge_clear_delivered_after_pending_media(settings):
+    ws = FakeWS()
+    session = CallSession(
+        ws=ws, adapter=StubAdapter(), settings=settings,
+        stt=StubSTT(""), llm=StubLLM(["hi"]), tts=StubTTS(),
+        embeddings=StubEmbeddings(),
+    )
+
+    async def run():
+        session._sender_task = asyncio.create_task(session._sender_loop())
+        for _ in range(2):
+            await session._send_queue.put(("media", b"\xff" * 160))
+        await asyncio.sleep(0.05)
+        session._barge_in()
+        await asyncio.sleep(0.05)
+
+    asyncio.run(run())
+    events = [m.get("event") for m in ws.received]
+    assert events.count("media") >= 2
+    assert events[-1] == "clear", f"clear must be last, got {events}"
+    clear_index = len(events) - 1 - events[::-1].index("clear")
+    assert all(e == "media" for e in events[:clear_index])
+
+
 def test_session_closes_websocket_when_done(settings):
     ws = FakeWS()
     session = CallSession(
