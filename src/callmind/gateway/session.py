@@ -23,6 +23,7 @@ from ..llm.embeddings import MinimaxEmbeddings
 from ..llm.minimax import MinimaxChat
 from ..stt.engine import WhisperSTT
 from ..telephony.base import CallStart, CallStop, MediaChunk, TelephonyAdapter
+from ..tools.router import ToolRouter
 from ..tts.minimax import MinimaxTTS
 
 log = logging.getLogger("callmind.session")
@@ -65,6 +66,7 @@ class CallSession:
         llm: MinimaxChat,
         tts: MinimaxTTS,
         embeddings: MinimaxEmbeddings,
+        tool_router: ToolRouter | None = None,
     ) -> None:
         self.ws = ws
         self.adapter = adapter
@@ -81,6 +83,7 @@ class CallSession:
         self.intent_chain = IntentChain(llm)
         self.memory = MemoryStore(settings.memory_db_path)
         self.kb = VectorStore(settings.business_id, settings.kb_dir)
+        self.tool_router = tool_router or ToolRouter()
 
         self.history: deque[tuple[str, str]] = deque(maxlen=settings.memory_window)
         self._loaded_history = False
@@ -222,6 +225,21 @@ class CallSession:
             return
 
         rag_context: str | None = None
+        if intent and intent.label in ("booking", "account_status"):
+            params = self.tool_router.extract_params(intent.label, user_text)
+            result = await self.tool_router.dispatch(
+                intent.label,
+                params,
+                call_id=self.call_id,
+                business_id=self.settings.business_id,
+            )
+            if result and result.success:
+                log.info("tool %s ok: %s", intent.label, result.summary)
+                rag_context = f"[Tool result for {intent.label}]\n{result.summary}"
+                self.memory.append_message(self.call_id, "tool", f"{intent.label}: {result.summary}")
+            elif result and not result.success:
+                log.warning("tool %s failed: %s", intent.label, result.error)
+                rag_context = f"[Tool {intent.label} failed: {result.error}]"
         if intent and intent.label == "faq" and not self.kb.is_empty():
             rag_context = await self._retrieve_context(user_text)
         await self._speak_llm_reply(user_text, rag_context=rag_context)

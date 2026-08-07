@@ -13,6 +13,7 @@ from ..config import get_settings
 from ..llm.embeddings import MinimaxEmbeddings
 from ..llm.minimax import MinimaxChat
 from ..stt.engine import WhisperSTT
+from ..tools.router import ToolRouter
 from ..telephony import create_adapter
 from ..telephony.client import TelnyxAPI
 from ..tts.minimax import MinimaxTTS
@@ -69,6 +70,7 @@ async def lifespan(app: FastAPI):
     app.state.llm = llm
     app.state.tts = tts
     app.state.embeddings = embeddings
+    app.state.tool_router = ToolRouter()
     app.state.telnyx = TelnyxAPI(
         api_key=settings.telnyx_api_key,
         base_url=settings.telnyx_api_base,
@@ -126,5 +128,6 @@ async def ws_call(ws: WebSocket) -> None:
         llm=st.llm,
         tts=st.tts,
         embeddings=st.embeddings,
+        tool_router=st.tool_router,
     )
     await session.run()
