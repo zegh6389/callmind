@@ -1,4 +1,4 @@
-from datetime import UTC
+from datetime import UTC, date, timedelta
 
 import pytest
 
@@ -48,11 +48,18 @@ def test_booking_missing_required_field(booking):
 
 
 def test_booking_invalid_date_format(booking):
+    res = await_(booking.run, {"title": "X", "date": "15/08/2026", "time": "14:00", "caller_name": "A"})
+    assert res.success is False
+
+
+def test_booking_rejects_past_date(booking):
+    past = (date.today() - timedelta(days=3)).isoformat()
     res = await_(
         booking.run,
-        {"title": "Visit", "date": "tomorrow", "time": "14:00"},
+        {"title": "Retro", "date": past, "time": "10:00", "caller_name": "A"},
     )
     assert res.success is False
+    assert "past" in res.error.lower()
 
 
 def test_account_known_phone(account):

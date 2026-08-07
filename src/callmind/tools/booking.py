@@ -47,6 +47,8 @@ class BookingTool(Tool):
             return ToolResult(success=False, summary="", error=f"invalid date/time: {e}")
         if hh < 0 or hh > 23 or mm < 0 or mm > 59:
             return ToolResult(success=False, summary="", error="time out of range")
+        if d < date.today():
+            return ToolResult(success=False, summary="", error="booking date is in the past")
 
         event_id = uuid.uuid4().hex[:12]
         log.info(
