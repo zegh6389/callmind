@@ -81,3 +81,21 @@ class TelnyxAdapter(TelephonyAdapter):
 
     def clear_message(self) -> dict | None:
         return {"event": "clear"}
+
+    def start_message(self) -> dict | None:
+        """Client->server 'start' handshake, required by Telnyx Media Streaming.
+
+        Schema per telnyx media-streaming docs; sent once right after the
+        gateway accepts the WebSocket (before any media events).
+        """
+        return {
+            "event": "start",
+            "start": {
+                "bidirectional": "rtp",
+                "stream_id": self._stream_id or "callmind-stream",
+                "media_codec": "PCMU",
+                "media_sample_rate": 8000,
+                "media_bit_rate": 64000,
+                "socket": "callmind",
+            },
+        }

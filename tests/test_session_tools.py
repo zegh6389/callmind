@@ -77,6 +77,9 @@ class StubAdapter:
         self.media_sent: list[bytes] = []
         self.clears: int = 0
 
+    def start_message(self):
+        return {"event": "start", "test": True}
+
     def parse(self, message):
         if isinstance(message, bytes):
             message = message.decode()
@@ -161,6 +164,22 @@ def audioop_lin2ulaw(pcm_bytes: bytes) -> bytes:
     import audioop
 
     return audioop.lin2ulaw(pcm_bytes, 2)
+
+
+def test_session_sends_adapter_start_frame_first(settings):
+    # Pull-up handshake: provider requiring an explicit client 'start'
+    # (Telnyx) must get it before any media flows.
+    ws = FakeWS()
+    adapter = StubAdapter()
+    session = CallSession(
+        ws=ws, adapter=adapter, settings=settings,
+        stt=StubSTT(""), llm=StubLLM(["hi"]), tts=StubTTS(),
+        embeddings=StubEmbeddings(),
+    )
+
+    asyncio.run(session.run())
+    assert ws.received, "expected at least the start frame"
+    assert ws.received[0] == {"event": "start", "test": True}
 
 
 def test_session_booking_runs_tool(settings):

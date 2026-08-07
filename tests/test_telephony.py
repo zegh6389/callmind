@@ -163,6 +163,21 @@ def test_telnyx_media_message_and_clear():
     assert adapter.clear_message() == {"event": "clear"}
 
 
+def test_telnyx_start_message_frame():
+    adapter = TelnyxAdapter()
+    start = adapter.start_message()
+    assert start is not None
+    assert start["event"] == "start"
+    assert start["start"]["media_codec"] == "PCMU"
+    assert start["start"]["media_sample_rate"] == 8000
+    assert start["start"]["bidirectional"] == "rtp"
+
+
+def test_twilio_has_no_start_message():
+    adapter = TwilioAdapter()
+    assert adapter.start_message() is None
+
+
 def test_telnyx_media_malformed_base64_does_not_crash():
     adapter = TelnyxAdapter()
     adapter.parse(_telnyx_start_msg())

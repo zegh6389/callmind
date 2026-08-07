@@ -104,6 +104,8 @@ class CallSession:
 
     async def run(self) -> None:
         self._sender_task = asyncio.create_task(self._sender_loop())
+        if start := self.adapter.start_message():
+            await self.ws.send_json(start)
         try:
             if self.settings.greeting:
                 self._start_response_text(self.settings.greeting)

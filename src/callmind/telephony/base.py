@@ -45,3 +45,7 @@ class TelephonyAdapter(ABC):
     def clear_message(self) -> dict | None:
         """Optional message that flushes the provider's playback buffer (barge-in)."""
         return None
+
+    def start_message(self) -> dict | None:
+        """Optional message the client must send to open the media stream (Telnyx)."""
+        return None
