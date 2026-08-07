@@ -173,6 +173,24 @@ def test_utterance_parked_while_previous_response_busy(settings):
     assert "second reply text" in joined
 
 
+def test_speech_start_captures_preroll_and_frame_once(settings):
+    # Regression lock for review item #9: SPEECH_START must not duplicate
+    # the trigger frame (preroll + exactly one copy of the loud frame).
+    session = CallSession(
+        ws=FakeWS(), adapter=StubAdapter(), settings=settings,
+        stt=StubSTT(""), llm=StubLLM(["hi"]), tts=StubTTS(),
+        embeddings=StubEmbeddings(),
+    )
+    _push_silence(session, n_frames=3)          # fill preroll (maxlen=3)
+    loud = np.full(160, 8000, dtype=np.int16).tobytes()
+    session._on_audio(audioop_lin2ulaw(loud))   # triggers SPEECH_START
+
+    chunks = session._speech_chunks
+    assert len(chunks) == 4                     # 3 preroll + trigger frame
+    loud_frames = [np.max(c) for c in chunks]
+    assert sum(1 for v in loud_frames if v > 5000) == 1
+
+
 def test_session_closes_websocket_when_done(settings):
     ws = FakeWS()
     session = CallSession(
