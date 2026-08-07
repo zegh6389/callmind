@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import hmac
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..brain import VectorStore, chunk_text
@@ -10,7 +11,22 @@ from .store import BusinessStore
 
 log = logging.getLogger("callmind.admin.router")
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+
+async def require_admin_token(request: Request) -> None:
+    settings = request.app.state.settings
+    token = settings.admin_token
+    if not token:
+        raise HTTPException(503, "admin API not enabled: set admin_token")
+    expected = request.headers.get("x-admin-token", "")
+    if not hmac.compare_digest(token.encode(), expected.encode()):
+        raise HTTPException(401, "invalid admin token")
+
+
+router = APIRouter(
+    prefix="/admin",
+    tags=["admin"],
+    dependencies=[Depends(require_admin_token)],
+)
 
 
 def _biz(request: Request) -> BusinessStore:
@@ -142,7 +158,6 @@ async def delete_kb_doc(request: Request, business_id: str, doc_id: str) -> None
         vectors = await embeddings.embed(texts)
     except Exception as e:
         raise HTTPException(502, f"re-embed failed: {e}") from e
-    store.__init__(business_id, _kb_base(request))  # reset
     store.add(texts, vectors, source="rebuild")
     store.save()
 

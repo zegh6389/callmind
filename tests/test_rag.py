@@ -53,6 +53,16 @@ def test_vector_store_empty_search(tmp_path):
     assert store.search([1.0, 0.0], top_k=3) == []
 
 
+def test_vector_store_zero_query_returns_empty_not_nan(tmp_path):
+    store = VectorStore("biz", str(tmp_path))
+    store.add(["hours are 9 to 5"], [[1.0, 0.0, 0.0]], source="t")
+    hits = store.search([0.0, 0.0, 0.0], top_k=1)
+    assert hits == []
+    import math
+
+    assert not any(isinstance(h[1], float) and math.isnan(h[1]) for h in [])
+
+
 def test_cosine_identical():
     a = np.array([1.0, 2.0, 3.0])
     assert abs(cosine(a, a) - 1.0) < 1e-6

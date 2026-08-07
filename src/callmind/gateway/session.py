@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections import deque
 
@@ -43,11 +44,11 @@ ESCALATION_TEXT = (
     "Please hold for a moment."
 )
 
-_SENTENCE_SPLIT = re = __import__("re").compile(r"(?<=[.!?])\s+")
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
 def split_sentences(text: str, max_len: int = 180) -> tuple[list[str], str]:
-    parts = re.split(text)
+    parts = _SENTENCE_SPLIT.split(text)
     if len(parts) == 1:
         if len(text) >= max_len:
             return [text], ""
@@ -67,6 +68,7 @@ class CallSession:
         tts: MinimaxTTS,
         embeddings: MinimaxEmbeddings,
         tool_router: ToolRouter | None = None,
+        business_store=None,
     ) -> None:
         self.ws = ws
         self.adapter = adapter
@@ -75,6 +77,9 @@ class CallSession:
         self.llm = llm
         self.tts = tts
         self.embeddings = embeddings
+        self.business_store = business_store
+        self._business: dict | None = None
+        self._escalation_threshold = settings.escalation_confidence_threshold
 
         self.call_id = ""
         self.from_number: str | None = None
@@ -83,7 +88,7 @@ class CallSession:
         self.intent_chain = IntentChain(llm)
         self.memory = MemoryStore(settings.memory_db_path)
         self.kb = VectorStore(settings.business_id, settings.kb_dir)
-        self.tool_router = tool_router or ToolRouter()
+        self.tool_router = tool_router or ToolRouter(stub_mode=self.settings.tool_stub_mode)
 
         self.history: deque[tuple[str, str]] = deque(maxlen=settings.memory_window)
         self._loaded_history = False
@@ -95,8 +100,9 @@ class CallSession:
         )
         self._preroll: deque[np.ndarray] = deque(maxlen=settings.vad_preroll_frames)
         self._speech_chunks: list[np.ndarray] = []
+        self._parked_utterance: np.ndarray | None = None
         self._frame_leftover = b""
-        self._send_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._send_queue: asyncio.Queue[tuple[str, bytes | None]] = asyncio.Queue()
         self._cancel = asyncio.Event()
         self._response_task: asyncio.Task | None = None
         self._sender_task: asyncio.Task | None = None
@@ -104,12 +110,19 @@ class CallSession:
 
     async def run(self) -> None:
         self._sender_task = asyncio.create_task(self._sender_loop())
+        if start := self.adapter.start_message():
+            await self.ws.send_json(start)
         try:
-            if self.settings.greeting:
-                self._start_response_text(self.settings.greeting)
+            greeting = self.business_greeting or self.settings.greeting
+            if greeting:
+                self._start_response_text(greeting)
             await self._receive_loop()
         finally:
             await self.close()
+
+    @property
+    def business_greeting(self) -> str:
+        return str(self._business.get("greeting", "") or "") if self._business else ""
 
     async def _receive_loop(self) -> None:
         while True:
@@ -123,6 +136,7 @@ class CallSession:
             if isinstance(event, CallStart):
                 self.call_id = event.call_id or self.call_id
                 self.from_number = event.from_number
+                self._resolve_business()
                 self.memory.start_conversation(self.call_id, self.settings.business_id, self.from_number)
                 self._seed_history()
                 log.info("call started id=%s from=%s", self.call_id, self.from_number)
@@ -131,6 +145,16 @@ class CallSession:
             elif isinstance(event, CallStop):
                 log.info("call stopped id=%s", self.call_id)
                 break
+
+    def _resolve_business(self) -> None:
+        if not self.business_store:
+            return
+        row = self.business_store.get_business(self.settings.business_id)
+        if not row:
+            return
+        self._business = row
+        if row.get("escalation_confidence"):
+            self._escalation_threshold = float(row["escalation_confidence"])
 
     def _seed_history(self) -> None:
         if self._loaded_history:
@@ -180,10 +204,11 @@ class CallSession:
         duration_ms = len(utterance8k) * 1000 // TELEPHONY_RATE
         if duration_ms < self.settings.vad_min_speech_ms:
             return
-        if self._response_task and not self._response_task.done():
-            log.debug("utterance dropped: response already running")
-            return
         utterance16k = resample(utterance8k, TELEPHONY_RATE, STT_RATE)
+        if self._response_task and not self._response_task.done():
+            log.debug("utterance parked: response already running")
+            self._parked_utterance = utterance16k
+            return
         self._response_task = asyncio.create_task(self._respond_audio(utterance16k))
 
     def _start_response_text(self, text: str) -> None:
@@ -215,7 +240,7 @@ class CallSession:
             log.info("intent=escalation -> human handoff")
             await self._speak_llm_reply(user_text, skip_llm=True, fixed_reply=ESCALATION_TEXT)
             return
-        if intent and intent.confidence < self.settings.escalation_confidence_threshold:
+        if intent and intent.confidence < self._escalation_threshold:
             log.info("low confidence %.2f -> ask to clarify", intent.confidence)
             await self._speak_llm_reply(
                 user_text,
@@ -298,12 +323,20 @@ class CallSession:
             reply = "".join(reply_parts).strip()
             if reply and not self._cancel.is_set():
                 self.history.append(("assistant", reply))
-                self.memory.append_message(self.call_id, "assistant", reply)
+                if self.call_id:
+                    self.memory.append_message(self.call_id, "assistant", reply)
                 log.info("agent: %s", reply)
             self.state = "listening"
+            if not self._cancel.is_set():
+                parked = self._parked_utterance
+                self._parked_utterance = None
+                if parked is not None and self._response_task is asyncio.current_task():
+                    await self._respond_audio(parked)
 
     def _messages(self, user_text: str, rag_context: str | None) -> list[dict[str, str]]:
         system = SYSTEM_PROMPT
+        if self._business and self._business.get("prompt"):
+            system += "\n\nBusiness guidance:\n" + str(self._business["prompt"])
         if rag_context:
             system += "\n\nUse the following knowledge base context to answer. Do not invent facts:\n" + rag_context
         messages: list[dict[str, str]] = [{"role": "system", "content": system}]
@@ -325,7 +358,7 @@ class CallSession:
                         return
                     if self.state != "speaking":
                         self.state = "speaking"
-                    await self._send_queue.put(frame)
+                    await self._send_queue.put(("media", frame))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -334,6 +367,7 @@ class CallSession:
     def _barge_in(self) -> None:
         log.info("barge-in: caller spoke over agent")
         self._cancel.set()
+        self._parked_utterance = None
         self.state = "listening"
         if self._response_task and not self._response_task.done():
             self._response_task.cancel()
@@ -344,15 +378,21 @@ class CallSession:
                 break
         clear = self.adapter.clear_message()
         if clear is not None:
-            asyncio.create_task(self.ws.send_json(clear))
+            self._send_queue.put_nowait(("clear", None))
 
     async def _sender_loop(self) -> None:
         try:
             while True:
-                frame = await self._send_queue.get()
+                kind, payload = await self._send_queue.get()
+                if kind == "clear":
+                    clear = self.adapter.clear_message()
+                    if clear is not None:
+                        await self.ws.send_json(clear)
+                    continue
                 if self._cancel.is_set():
                     continue
-                await self.ws.send_json(self.adapter.media_message(frame, self._seq))
+                assert payload is not None  # media frame bytes
+                await self.ws.send_json(self.adapter.media_message(payload, self._seq))
                 self._seq += 1
                 await asyncio.sleep(FRAME_SECONDS)
         except asyncio.CancelledError:
@@ -366,4 +406,8 @@ class CallSession:
             self._response_task.cancel()
         if self._sender_task and not self._sender_task.done():
             self._sender_task.cancel()
+        try:
+            await self.ws.close()
+        except Exception:
+            log.debug("ws already closed", exc_info=True)
         log.info("session closed id=%s", self.call_id)

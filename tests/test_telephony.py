@@ -77,6 +77,28 @@ def test_twilio_clear_message():
     assert adapter.clear_message() == {"event": "clear", "streamSid": "MZ123"}
 
 
+def test_twilio_media_malformed_base64_does_not_crash():
+    adapter = TwilioAdapter()
+    adapter.parse(_twilio_start_msg())
+    msg = json.dumps({
+        "event": "media",
+        "streamSid": "MZ123",
+        "media": {"track": "inbound", "chunk": "8", "payload": "!!!not-base64!!!"},
+    })
+    assert adapter.parse(msg) is None
+
+
+def test_twilio_media_empty_payload_skipped():
+    adapter = TwilioAdapter()
+    adapter.parse(_twilio_start_msg())
+    msg = json.dumps({
+        "event": "media",
+        "streamSid": "MZ123",
+        "media": {"track": "inbound", "chunk": "9", "payload": ""},
+    })
+    assert adapter.parse(msg) is None
+
+
 def _telnyx_start_msg():
     return json.dumps({
         "event": "start",
@@ -139,3 +161,31 @@ def test_telnyx_media_message_and_clear():
     msg = adapter.media_message(b"\x00" * 160, seq=1)
     assert msg == {"event": "media", "media": {"payload": base64.b64encode(b"\x00" * 160).decode()}}
     assert adapter.clear_message() == {"event": "clear"}
+
+
+def test_telnyx_start_message_frame():
+    adapter = TelnyxAdapter()
+    start = adapter.start_message()
+    assert start is not None
+    assert start["event"] == "start"
+    assert start["start"]["media_codec"] == "PCMU"
+    assert start["start"]["media_sample_rate"] == 8000
+    assert start["start"]["bidirectional"] == "rtp"
+
+
+def test_twilio_has_no_start_message():
+    adapter = TwilioAdapter()
+    assert adapter.start_message() is None
+
+
+def test_telnyx_media_malformed_base64_does_not_crash():
+    adapter = TelnyxAdapter()
+    adapter.parse(_telnyx_start_msg())
+    msg = json.dumps({
+        "event": "media",
+        "sequence_number": "5",
+        "media": {"track": "inbound", "payload": "@@@not-base64@@@"},
+        "stream_id": "ST-9",
+    })
+    assert adapter.parse(msg) is None
+    assert adapter.parse(json.dumps({"event": "media", "media": {"track": "inbound"}})) is None

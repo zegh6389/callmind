@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# audioop is stdlib-only until 3.13 (removed there). Pinned <3.13 in
+# pyproject; if you upgrade past 3.12, replace ulaw2lin/lin2ulaw below.
 import audioop
 import math
 

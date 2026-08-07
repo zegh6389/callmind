@@ -1,4 +1,4 @@
-from datetime import UTC
+from datetime import UTC, timedelta
 
 import pytest
 
@@ -14,7 +14,7 @@ def booking():
 
 @pytest.fixture
 def account():
-    return AccountTool()
+    return AccountTool(stub_mode=True)
 
 
 @pytest.fixture
@@ -48,11 +48,20 @@ def test_booking_missing_required_field(booking):
 
 
 def test_booking_invalid_date_format(booking):
+    res = await_(booking.run, {"title": "X", "date": "15/08/2026", "time": "14:00", "caller_name": "A"})
+    assert res.success is False
+
+
+def test_booking_rejects_past_date(booking):
+    from datetime import datetime
+
+    past = (datetime.now(UTC).date() - timedelta(days=3)).isoformat()
     res = await_(
         booking.run,
-        {"title": "Visit", "date": "tomorrow", "time": "14:00"},
+        {"title": "Retro", "date": past, "time": "10:00", "caller_name": "A"},
     )
     assert res.success is False
+    assert "past" in res.error.lower()
 
 
 def test_account_known_phone(account):
@@ -67,6 +76,13 @@ def test_account_known_phone(account):
 def test_account_missing_phone(account):
     res = await_(account.run, {})
     assert res.success is False
+
+
+def test_account_unavailable_when_stub_disabled():
+    tool = AccountTool(stub_mode=False)
+    res = await_(tool.run, {"caller_phone": "15551234567"}, call_id="c", business_id="b")
+    assert res.success is False
+    assert "not configured" in res.error.lower()
 
 
 def test_router_dispatch_booking(router):
@@ -96,6 +112,19 @@ def test_router_extract_booking_params(router):
 def test_router_extract_account_params_phone(router):
     params = router.extract_params("account_status", "what's the status on 555-123-4567?")
     assert "5551234567" in params.get("caller_phone", "")
+
+
+def test_router_phone_not_lucky_number(router):
+    # 8-9 digit order/ticket ids are not phones; must not hallucinate an account.
+    params = router.extract_params("account_status", "My order number is 12345678, when will it arrive?")
+    assert not params.get("caller_phone")
+    params = router.extract_params("account_status", "Use ticket 123456789 please")
+    assert not params.get("caller_phone")
+
+
+def test_router_phone_accepts_plus_country(router):
+    params = router.extract_params("account_status", "that's +1 416 555-0199")
+    assert params.get("caller_phone") == "14165550199"
 
 
 def test_router_extract_returns_empty_for_unknown(router):

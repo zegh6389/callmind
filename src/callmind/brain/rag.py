@@ -89,8 +89,11 @@ class VectorStore:
         if self._vectors is None or not self._chunks:
             return []
         q = np.asarray(query_vec, dtype=np.float32)
+        q_norm = float(np.linalg.norm(q))
+        if q_norm == 0.0:
+            return []
         scores = (self._vectors @ q) / (
-            np.linalg.norm(self._vectors, axis=1) * np.linalg.norm(q) + 1e-12
+            np.linalg.norm(self._vectors, axis=1) * q_norm + 1e-12
         )
         idx = np.argsort(scores)[::-1][:top_k]
         return [(self._chunks[i]["text"], float(scores[i]), self._chunks[i].get("source", "")) for i in idx]

@@ -12,6 +12,9 @@ class AccountTool(Tool):
     name = "account.get_status"
     description = "Look up account status for the caller."
 
+    def __init__(self, stub_mode: bool = False) -> None:
+        self.stub_mode = stub_mode
+
     async def run(
         self,
         params: dict,
@@ -22,6 +25,12 @@ class AccountTool(Tool):
         phone = str(params.get("caller_phone") or params.get("account_id") or "").strip()
         if not phone:
             return ToolResult(success=False, summary="", error="missing caller_phone or account_id")
+        if not self.stub_mode:
+            return ToolResult(
+                success=False,
+                summary="",
+                error="account lookup not configured (CRM integration pending)",
+            )
 
         # Deterministic stub: hash phone -> canned state. Real impl: call CRM.
         digest = hashlib.sha256(phone.encode("utf-8")).digest()

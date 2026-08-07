@@ -36,3 +36,10 @@ def test_recent_messages_no_phone(store):
 def test_end_conversation(store):
     store.start_conversation("c1", "b1", "+15551111111")
     store.end_conversation("c1", summary="a polite greeting")
+
+
+def test_append_message_requires_existing_call(store):
+    import sqlite3
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.append_message("ghost-call", "user", "hi")
