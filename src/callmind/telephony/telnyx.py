@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import logging
 
@@ -48,9 +49,16 @@ class TelnyxAdapter(TelephonyAdapter):
             if track != "inbound":
                 return None
             payload = media.get("payload", "")
+            if not payload:
+                return None
             seq_raw = media.get("chunk")
+            try:
+                raw = base64.b64decode(payload, validate=False)
+            except (binascii.Error, ValueError):
+                log.warning("telnyx: malformed media payload")
+                return None
             return MediaChunk(
-                payload=base64.b64decode(payload),
+                payload=raw,
                 stream_id=data.get("stream_id"),
                 seq=int(seq_raw) if seq_raw else None,
                 track=track,
