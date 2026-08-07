@@ -98,6 +98,19 @@ def test_router_extract_account_params_phone(router):
     assert "5551234567" in params.get("caller_phone", "")
 
 
+def test_router_phone_not_lucky_number(router):
+    # 8-9 digit order/ticket ids are not phones; must not hallucinate an account.
+    params = router.extract_params("account_status", "My order number is 12345678, when will it arrive?")
+    assert not params.get("caller_phone")
+    params = router.extract_params("account_status", "Use ticket 123456789 please")
+    assert not params.get("caller_phone")
+
+
+def test_router_phone_accepts_plus_country(router):
+    params = router.extract_params("account_status", "that's +1 416 555-0199")
+    assert params.get("caller_phone") == "14165550199"
+
+
 def test_router_extract_returns_empty_for_unknown(router):
     params = router.extract_params("smalltalk", "hi there")
     assert params == {}
