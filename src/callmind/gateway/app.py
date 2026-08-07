@@ -85,6 +85,7 @@ async def lifespan(app: FastAPI):
     await llm.close()
     await tts.close()
     await embeddings.close()
+    app.state.stt.close()
     await app.state.telnyx.close()
 
 

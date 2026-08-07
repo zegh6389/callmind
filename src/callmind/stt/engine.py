@@ -67,3 +67,7 @@ class WhisperSTT:
     async def transcribe(self, pcm16k: np.ndarray) -> str:
         async with self._lock:
             return await asyncio.to_thread(self.transcribe_sync, pcm16k)
+
+    def close(self) -> None:
+        """Release the underlying model so shutdown is clean."""
+        self._model = None
