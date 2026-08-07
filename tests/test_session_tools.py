@@ -215,6 +215,28 @@ def test_barge_clear_delivered_after_pending_media(settings):
     assert all(e == "media" for e in events[:clear_index])
 
 
+def test_greeting_before_callstart_leaves_no_orphan_rows(settings):
+    # Greeting TTS can start before the provider's start frame arrives --
+    # speaken fully with memory writes. Must not write call_id="" rows.
+    session = CallSession(
+        ws=FakeWS(), adapter=StubAdapter(), settings=settings,
+        stt=StubSTT(""), llm=StubLLM(["you"]), tts=StubTTS(),
+        embeddings=StubEmbeddings(),
+    )
+
+    async def run():
+        session._start_response_text("Welcome to the line. ")
+        await session._response_task
+        await session.close()
+
+    asyncio.run(run())
+    import sqlite3
+
+    with sqlite3.connect(settings.memory_db_path) as conn:
+        n = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+    assert n == 0
+
+
 def test_session_closes_websocket_when_done(settings):
     ws = FakeWS()
     session = CallSession(

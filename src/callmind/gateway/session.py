@@ -302,7 +302,8 @@ class CallSession:
             reply = "".join(reply_parts).strip()
             if reply and not self._cancel.is_set():
                 self.history.append(("assistant", reply))
-                self.memory.append_message(self.call_id, "assistant", reply)
+                if self.call_id:
+                    self.memory.append_message(self.call_id, "assistant", reply)
                 log.info("agent: %s", reply)
             self.state = "listening"
             if not self._cancel.is_set():
