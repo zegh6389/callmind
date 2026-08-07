@@ -125,7 +125,6 @@ def test_kb_after_delete_keeps_other_docs_searchable(client, tmp_path):
         headers=TOKEN,
         json={"source": "hours", "text": "We open at nine o'clock. " * 40},
     )
-    doc_b = r.json()["doc"]["id"]
 
     r = client.delete(f"/admin/businesses/{bid}/kb/docs/{doc_a}", headers=TOKEN)
     assert r.status_code == 204
