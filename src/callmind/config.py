@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -66,6 +69,17 @@ class Settings(BaseSettings):
     admin_token: str = ""
 
     tool_stub_mode: bool = False
+
+    data_dir: str = ""
+
+    @model_validator(mode="after")
+    def _anchor_paths(self) -> Settings:
+        base = self.data_dir or os.getcwd()
+        if not Path(self.memory_db_path).is_absolute():
+            self.memory_db_path = str(Path(base) / self.memory_db_path)
+        if not Path(self.kb_dir).is_absolute():
+            self.kb_dir = str(Path(base) / self.kb_dir)
+        return self
 
 
 @lru_cache
