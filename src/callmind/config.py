@@ -63,6 +63,8 @@ class Settings(BaseSettings):
 
     escalation_confidence_threshold: float = 0.55
 
+    admin_token: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:
