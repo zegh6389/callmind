@@ -108,6 +108,36 @@ def test_kb_doc_create_and_delete(client):
     assert r.json()["docs"] == []
 
 
+def test_kb_after_delete_keeps_other_docs_searchable(client, tmp_path):
+    from callmind.brain.rag import VectorStore
+
+    r = client.post("/admin/businesses", headers=TOKEN, json={"name": "Acme"})
+    bid = r.json()["business"]["id"]
+
+    r = client.post(
+        f"/admin/businesses/{bid}/kb/docs",
+        headers=TOKEN,
+        json={"source": "pricing", "text": "Widgets cost eleven dollars. " * 40},
+    )
+    doc_a = r.json()["doc"]["id"]
+    r = client.post(
+        f"/admin/businesses/{bid}/kb/docs",
+        headers=TOKEN,
+        json={"source": "hours", "text": "We open at nine o'clock. " * 40},
+    )
+    doc_b = r.json()["doc"]["id"]
+
+    r = client.delete(f"/admin/businesses/{bid}/kb/docs/{doc_a}", headers=TOKEN)
+    assert r.status_code == 204
+
+    store = VectorStore(bid, str(tmp_path / "kb"))
+    assert not store.is_empty()
+    hits = store.search([0.3, 0.2, 0.1, 0.4], top_k=2)
+    texts = [h[0] for h in hits]
+    assert all("nine" in t for t in texts)
+    assert all("widgets" not in t for t in texts)
+
+
 def test_sessions_and_analytics(client):
     r = client.post("/admin/businesses", headers=TOKEN, json={"name": "Acme"})
     bid = r.json()["business"]["id"]

@@ -158,7 +158,6 @@ async def delete_kb_doc(request: Request, business_id: str, doc_id: str) -> None
         vectors = await embeddings.embed(texts)
     except Exception as e:
         raise HTTPException(502, f"re-embed failed: {e}") from e
-    store.__init__(business_id, _kb_base(request))  # reset
     store.add(texts, vectors, source="rebuild")
     store.save()
 
