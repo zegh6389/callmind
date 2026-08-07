@@ -119,6 +119,7 @@ class FakeWS:
     def __init__(self):
         self.received: list[dict] = []
         self.to_send: list[dict] = []
+        self.closed = False
 
     async def receive(self):
         if self.to_send:
@@ -127,6 +128,20 @@ class FakeWS:
 
     async def send_json(self, obj):
         self.received.append(obj)
+
+    async def close(self, code: int = 1000):
+        self.closed = True
+
+
+def test_session_closes_websocket_when_done(settings):
+    ws = FakeWS()
+    session = CallSession(
+        ws=ws, adapter=StubAdapter(), settings=settings,
+        stt=StubSTT(""), llm=StubLLM(["hi"]), tts=StubTTS(),
+        embeddings=StubEmbeddings(),
+    )
+    asyncio.run(session.run())
+    assert ws.closed
 
 
 @pytest.fixture

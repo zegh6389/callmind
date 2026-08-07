@@ -368,4 +368,8 @@ class CallSession:
             self._response_task.cancel()
         if self._sender_task and not self._sender_task.done():
             self._sender_task.cancel()
+        try:
+            await self.ws.close()
+        except Exception:
+            log.debug("ws already closed", exc_info=True)
         log.info("session closed id=%s", self.call_id)
