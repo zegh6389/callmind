@@ -65,6 +65,8 @@ class Settings(BaseSettings):
 
     admin_token: str = ""
 
+    tool_stub_mode: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

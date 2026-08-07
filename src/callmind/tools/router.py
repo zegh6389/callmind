@@ -81,9 +81,14 @@ class ToolRouter:
         "account_status": AccountTool,
     }
 
-    def __init__(self, tools: dict[str, Tool] | None = None) -> None:
+    def __init__(self, tools: dict[str, Tool] | None = None, stub_mode: bool = False) -> None:
         self._tools: dict[str, Tool] = tools or {
-            intent: cls() for intent, cls in self.WHITELIST.items()
+            intent: (
+                cls(stub_mode=stub_mode)
+                if isinstance(cls, type) and issubclass(cls, AccountTool)
+                else cls()
+            )
+            for intent, cls in self.WHITELIST.items()
         }
 
     def available_tools(self) -> list[str]:

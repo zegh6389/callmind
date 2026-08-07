@@ -383,7 +383,7 @@ def _run_session(settings, user_text, intent_json, reply_text, *, stt_text=None,
         {"event": "start", "start": {"call_control_id": "c1", "from": "+15551111111", "to": "+15550000"}},
     ]
     adapter = StubAdapter()
-    router = tool_router or ToolRouter()
+    router = tool_router or ToolRouter(stub_mode=True)
     session = CallSession(
         ws=ws, adapter=adapter, settings=settings,
         stt=stt, llm=llm, tts=tts, embeddings=StubEmbeddings(), tool_router=router,

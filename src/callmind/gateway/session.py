@@ -83,7 +83,7 @@ class CallSession:
         self.intent_chain = IntentChain(llm)
         self.memory = MemoryStore(settings.memory_db_path)
         self.kb = VectorStore(settings.business_id, settings.kb_dir)
-        self.tool_router = tool_router or ToolRouter()
+        self.tool_router = tool_router or ToolRouter(stub_mode=self.settings.tool_stub_mode)
 
         self.history: deque[tuple[str, str]] = deque(maxlen=settings.memory_window)
         self._loaded_history = False

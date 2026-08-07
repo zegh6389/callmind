@@ -14,7 +14,7 @@ def booking():
 
 @pytest.fixture
 def account():
-    return AccountTool()
+    return AccountTool(stub_mode=True)
 
 
 @pytest.fixture
@@ -67,6 +67,13 @@ def test_account_known_phone(account):
 def test_account_missing_phone(account):
     res = await_(account.run, {})
     assert res.success is False
+
+
+def test_account_unavailable_when_stub_disabled():
+    tool = AccountTool(stub_mode=False)
+    res = await_(tool.run, {"caller_phone": "15551234567"}, call_id="c", business_id="b")
+    assert res.success is False
+    assert "not configured" in res.error.lower()
 
 
 def test_router_dispatch_booking(router):
