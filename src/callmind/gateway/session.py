@@ -68,6 +68,7 @@ class CallSession:
         tts: MinimaxTTS,
         embeddings: MinimaxEmbeddings,
         tool_router: ToolRouter | None = None,
+        business_store=None,
     ) -> None:
         self.ws = ws
         self.adapter = adapter
@@ -76,6 +77,9 @@ class CallSession:
         self.llm = llm
         self.tts = tts
         self.embeddings = embeddings
+        self.business_store = business_store
+        self._business: dict | None = None
+        self._escalation_threshold = settings.escalation_confidence_threshold
 
         self.call_id = ""
         self.from_number: str | None = None
@@ -109,11 +113,16 @@ class CallSession:
         if start := self.adapter.start_message():
             await self.ws.send_json(start)
         try:
-            if self.settings.greeting:
-                self._start_response_text(self.settings.greeting)
+            greeting = self.business_greeting or self.settings.greeting
+            if greeting:
+                self._start_response_text(greeting)
             await self._receive_loop()
         finally:
             await self.close()
+
+    @property
+    def business_greeting(self) -> str:
+        return str(self._business.get("greeting", "") or "") if self._business else ""
 
     async def _receive_loop(self) -> None:
         while True:
@@ -127,6 +136,7 @@ class CallSession:
             if isinstance(event, CallStart):
                 self.call_id = event.call_id or self.call_id
                 self.from_number = event.from_number
+                self._resolve_business()
                 self.memory.start_conversation(self.call_id, self.settings.business_id, self.from_number)
                 self._seed_history()
                 log.info("call started id=%s from=%s", self.call_id, self.from_number)
@@ -135,6 +145,16 @@ class CallSession:
             elif isinstance(event, CallStop):
                 log.info("call stopped id=%s", self.call_id)
                 break
+
+    def _resolve_business(self) -> None:
+        if not self.business_store:
+            return
+        row = self.business_store.get_business(self.settings.business_id)
+        if not row:
+            return
+        self._business = row
+        if row.get("escalation_confidence"):
+            self._escalation_threshold = float(row["escalation_confidence"])
 
     def _seed_history(self) -> None:
         if self._loaded_history:
@@ -220,7 +240,7 @@ class CallSession:
             log.info("intent=escalation -> human handoff")
             await self._speak_llm_reply(user_text, skip_llm=True, fixed_reply=ESCALATION_TEXT)
             return
-        if intent and intent.confidence < self.settings.escalation_confidence_threshold:
+        if intent and intent.confidence < self._escalation_threshold:
             log.info("low confidence %.2f -> ask to clarify", intent.confidence)
             await self._speak_llm_reply(
                 user_text,
@@ -315,6 +335,8 @@ class CallSession:
 
     def _messages(self, user_text: str, rag_context: str | None) -> list[dict[str, str]]:
         system = SYSTEM_PROMPT
+        if self._business and self._business.get("prompt"):
+            system += "\n\nBusiness guidance:\n" + str(self._business["prompt"])
         if rag_context:
             system += "\n\nUse the following knowledge base context to answer. Do not invent facts:\n" + rag_context
         messages: list[dict[str, str]] = [{"role": "system", "content": system}]

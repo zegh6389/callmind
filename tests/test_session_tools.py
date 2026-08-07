@@ -237,6 +237,68 @@ def test_greeting_before_callstart_leaves_no_orphan_rows(settings):
     assert n == 0
 
 
+def test_session_uses_business_row_greeting(settings, tmp_path):
+    from callmind.admin.store import BusinessStore
+
+    db = BusinessStore(str(tmp_path / "biz.db"))
+    biz = db.create_business("default", prompt="Talk like a pirate.", greeting="Ahoy matey!")
+    s2 = settings.model_copy(update={"business_id": biz["id"]})
+    tts = StubTTS()
+    ws = FakeWS()
+    ws.to_send = [
+        {"event": "start", "start": {"call_control_id": "c1", "from": "+15551111111", "to": "+15550000"}},
+    ]
+    session = CallSession(
+        ws=ws, adapter=StubAdapter(), settings=s2,
+        stt=StubSTT(""), llm=StubLLM(["hi"]), tts=tts,
+        embeddings=StubEmbeddings(), business_store=db,
+    )
+
+    async def go():
+        await session._receive_loop()          # resolves business row
+        session._start_response_text(session.business_greeting)
+        await session._response_task
+        await session.close()
+
+    asyncio.run(go())
+    assert tts.spoken == ["Ahoy matey!"]
+
+
+def test_session_escalation_threshold_from_business(settings, tmp_path):
+    from callmind.admin.store import BusinessStore
+
+    db = BusinessStore(str(tmp_path / "biz2.db"))
+    biz = db.create_business("default", escalation_confidence=0.95)
+    s2 = settings.model_copy(update={"business_id": biz["id"]})
+    # faq with conf 0.8: global threshold 0.55 would answer directly;
+    # business threshold 0.95 must route to the clarify path instead.
+    llm = StubLLM([
+        '{"intent":"faq","confidence":0.8}',
+        "I can help with that.",
+    ])
+    tts = StubTTS()
+    ws = FakeWS()
+    ws.to_send = [
+        {"event": "start", "start": {"call_control_id": "c1", "from": "+15551111111", "to": "+15550000"}},
+    ]
+    session = CallSession(
+        ws=ws, adapter=StubAdapter(), settings=s2,
+        stt=StubSTT("what are your hours"), llm=llm, tts=tts,
+        embeddings=StubEmbeddings(), business_store=db,
+    )
+
+    async def run():
+        await session._receive_loop()
+        session._vad.reset()
+        _push_audio(session)
+        _push_silence(session)
+        if session._response_task:
+            await asyncio.wait_for(session._response_task, timeout=2.0)
+
+    asyncio.run(run())
+    assert "rephrase" in " ".join(tts.spoken).lower()
+
+
 def test_session_closes_websocket_when_done(settings):
     ws = FakeWS()
     session = CallSession(

@@ -148,5 +148,6 @@ async def ws_call(ws: WebSocket) -> None:
         tts=st.tts,
         embeddings=st.embeddings,
         tool_router=st.tool_router,
+        business_store=st.business_store,
     )
     await session.run()
