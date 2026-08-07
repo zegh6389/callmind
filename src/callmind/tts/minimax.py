@@ -15,7 +15,7 @@ class MinimaxTTS:
         api_key: str,
         base_url: str = "https://api.minimax.io/v1",
         endpoint: str = "/t2a_v2",
-        model: str = "speech-2.8-flash",
+        model: str = "speech-2.8-turbo",
         voice_id: str = "",
         sample_rate: int = 24000,
         speed: float = 1.0,

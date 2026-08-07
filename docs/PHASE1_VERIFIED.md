@@ -1,7 +1,7 @@
 # Phase 1 — Live Verified
 
 Date: 2026-08-07
-Telnyx number: +1 437 900 8438
+Telnyx number: +1 XXX-XXX-XXXX (redacted; see local notes)
 Result: end-to-end voice conversation with barge-in working.
 
 ## Bugs found and fixed during live test
@@ -24,12 +24,14 @@ Result: end-to-end voice conversation with barge-in working.
 ## Telnyx streaming setup (verified)
 
 - Inbound call → webhook → gateway POSTs `answer` with:
-  - `stream_url = wss://.../ws/call`
+  - `stream_url = wss://<your-public-host>/ws/call`
   - `stream_track = inbound_track`
   - `stream_bidirectional_mode = rtp`
   - `stream_bidirectional_codec = PCMU`
 - Telnyx opens WebSocket → sends `start`, `media` (base64 PCMU), `stop`
 - Gateway sends back `media` (base64 PCMU) and `clear` for barge-in
+
+(Note: keep the live ngrok URL, real phone number, and any account identifiers out of version control. Track them in a local-only note.)
 
 ## Latency (rough, single machine)
 
