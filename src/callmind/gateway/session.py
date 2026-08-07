@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections import deque
 
@@ -43,11 +44,11 @@ ESCALATION_TEXT = (
     "Please hold for a moment."
 )
 
-_SENTENCE_SPLIT = re = __import__("re").compile(r"(?<=[.!?])\s+")
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
 def split_sentences(text: str, max_len: int = 180) -> tuple[list[str], str]:
-    parts = re.split(text)
+    parts = _SENTENCE_SPLIT.split(text)
     if len(parts) == 1:
         if len(text) >= max_len:
             return [text], ""
