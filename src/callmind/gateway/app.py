@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, WebSocket
 
 from ..config import get_settings
+from ..llm.embeddings import MinimaxEmbeddings
 from ..llm.minimax import MinimaxChat
 from ..stt.engine import WhisperSTT
 from ..telephony import create_adapter
@@ -52,11 +53,19 @@ async def lifespan(app: FastAPI):
         volume=settings.tts_volume,
         pitch=settings.tts_pitch,
     )
+    embeddings = MinimaxEmbeddings(
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        endpoint=settings.embedding_endpoint,
+        model=settings.embedding_model,
+        embedding_type=settings.embedding_type,
+    )
 
     app.state.settings = settings
     app.state.stt = stt
     app.state.llm = llm
     app.state.tts = tts
+    app.state.embeddings = embeddings
     app.state.telnyx = TelnyxAPI(
         api_key=settings.telnyx_api_key,
         base_url=settings.telnyx_api_base,
@@ -65,6 +74,7 @@ async def lifespan(app: FastAPI):
     yield
     await llm.close()
     await tts.close()
+    await embeddings.close()
     await app.state.telnyx.close()
 
 
@@ -107,5 +117,6 @@ async def ws_call(ws: WebSocket) -> None:
         stt=st.stt,
         llm=st.llm,
         tts=st.tts,
+        embeddings=st.embeddings,
     )
     await session.run()

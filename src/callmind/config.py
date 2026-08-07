@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.7
     memory_window: int = 8
 
+    embedding_model: str = "embo-01"
+    embedding_endpoint: str = "/v1/embeddings"
+    embedding_type: str = "db"
+    embedding_dim: int = 1536
+    embedding_batch_size: int = 32
+
     tts_api_key: str = ""
     tts_base_url: str = "https://api.minimax.io/v1"
     tts_endpoint: str = "/t2a_v2"
@@ -46,6 +52,15 @@ class Settings(BaseSettings):
     tts_pitch: int = 0
 
     greeting: str = "Hi, thanks for calling. How can I help you today?"
+
+    memory_db_path: str = "callmind.db"
+    kb_dir: str = "kb"
+    retrieval_top_k: int = 3
+    retrieval_min_score: float = 0.2
+
+    business_id: str = "default"
+
+    escalation_confidence_threshold: float = 0.55
 
 
 @lru_cache

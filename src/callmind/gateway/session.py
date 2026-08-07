@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from collections import deque
 
@@ -18,7 +17,9 @@ from ..audio.codec import (
     resample,
 )
 from ..audio.vad import EnergyVAD, VADEventType
+from ..brain import IntentChain, MemoryStore, VectorStore
 from ..config import Settings
+from ..llm.embeddings import MinimaxEmbeddings
 from ..llm.minimax import MinimaxChat
 from ..stt.engine import WhisperSTT
 from ..telephony.base import CallStart, CallStop, MediaChunk, TelephonyAdapter
@@ -36,11 +37,16 @@ SYSTEM_PROMPT = (
     "say so and offer to connect the caller with a human."
 )
 
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+ESCALATION_TEXT = (
+    "I'll connect you with a human representative right away. "
+    "Please hold for a moment."
+)
+
+_SENTENCE_SPLIT = re = __import__("re").compile(r"(?<=[.!?])\s+")
 
 
 def split_sentences(text: str, max_len: int = 180) -> tuple[list[str], str]:
-    parts = _SENTENCE_SPLIT.split(text)
+    parts = re.split(text)
     if len(parts) == 1:
         if len(text) >= max_len:
             return [text], ""
@@ -58,6 +64,7 @@ class CallSession:
         stt: WhisperSTT,
         llm: MinimaxChat,
         tts: MinimaxTTS,
+        embeddings: MinimaxEmbeddings,
     ) -> None:
         self.ws = ws
         self.adapter = adapter
@@ -65,11 +72,18 @@ class CallSession:
         self.stt = stt
         self.llm = llm
         self.tts = tts
+        self.embeddings = embeddings
 
         self.call_id = ""
         self.from_number: str | None = None
         self.state = "listening"
+
+        self.intent_chain = IntentChain(llm)
+        self.memory = MemoryStore(settings.memory_db_path)
+        self.kb = VectorStore(settings.business_id, settings.kb_dir)
+
         self.history: deque[tuple[str, str]] = deque(maxlen=settings.memory_window)
+        self._loaded_history = False
 
         self._vad = EnergyVAD(
             energy_dbfs=settings.vad_energy_dbfs,
@@ -104,14 +118,26 @@ class CallSession:
                 continue
             event = self.adapter.parse(message)
             if isinstance(event, CallStart):
-                self.call_id = event.call_id
+                self.call_id = event.call_id or self.call_id
                 self.from_number = event.from_number
-                log.info("call started id=%s from=%s", event.call_id, event.from_number)
+                self.memory.start_conversation(self.call_id, self.settings.business_id, self.from_number)
+                self._seed_history()
+                log.info("call started id=%s from=%s", self.call_id, self.from_number)
             elif isinstance(event, MediaChunk):
                 self._on_audio(event.payload)
             elif isinstance(event, CallStop):
                 log.info("call stopped id=%s", self.call_id)
                 break
+
+    def _seed_history(self) -> None:
+        if self._loaded_history:
+            return
+        prior = self.memory.load_recent(
+            self.settings.business_id, self.from_number, limit=self.settings.memory_window
+        )
+        for role, content in prior:
+            self.history.append((role, content))
+        self._loaded_history = True
 
     def _on_audio(self, mulaw_bytes: bytes) -> None:
         pcm8k = mulaw_to_pcm16(mulaw_bytes)
@@ -172,9 +198,55 @@ class CallSession:
             return
         log.info("STT %.0fms: %s", (time.perf_counter() - t0) * 1000, text)
         self.history.append(("user", text))
-        await self._speak_llm_reply(text)
+        self.memory.append_message(self.call_id, "user", text)
+        await self._handle_turn(text)
 
-    async def _speak_llm_reply(self, user_text: str, skip_llm: bool = False, fixed_reply: str = "") -> None:
+    async def _handle_turn(self, user_text: str) -> None:
+        try:
+            intent = await self.intent_chain.classify(user_text, list(self.history))
+        except Exception:
+            log.exception("intent classification failed")
+            intent = None
+
+        if intent and intent.label == "escalation":
+            log.info("intent=escalation -> human handoff")
+            await self._speak_llm_reply(user_text, skip_llm=True, fixed_reply=ESCALATION_TEXT)
+            return
+        if intent and intent.confidence < self.settings.escalation_confidence_threshold:
+            log.info("low confidence %.2f -> ask to clarify", intent.confidence)
+            await self._speak_llm_reply(
+                user_text,
+                skip_llm=True,
+                fixed_reply="Sorry, I want to make sure I help with the right thing. Could you rephrase that?",
+            )
+            return
+
+        rag_context: str | None = None
+        if intent and intent.label == "faq" and not self.kb.is_empty():
+            rag_context = await self._retrieve_context(user_text)
+        await self._speak_llm_reply(user_text, rag_context=rag_context)
+
+    async def _retrieve_context(self, query: str) -> str | None:
+        try:
+            vecs = await self.embeddings.embed([query])
+        except Exception:
+            log.exception("embedding query failed")
+            return None
+        if not vecs:
+            return None
+        hits = self.kb.search(vecs[0], top_k=self.settings.retrieval_top_k)
+        good = [h for h in hits if h[1] >= self.settings.retrieval_min_score]
+        if not good:
+            return None
+        return "\n\n".join(f"[source: {src}]\n{text}" for text, _score, src in good)
+
+    async def _speak_llm_reply(
+        self,
+        user_text: str,
+        skip_llm: bool = False,
+        fixed_reply: str = "",
+        rag_context: str | None = None,
+    ) -> None:
         self._cancel.clear()
         self.state = "responding"
         reply_parts: list[str] = []
@@ -184,7 +256,8 @@ class CallSession:
                 reply_parts.append(fixed_reply)
             else:
                 pending = ""
-                async for delta in self.llm.stream_chat(self._messages(user_text)):
+                messages = self._messages(user_text, rag_context)
+                async for delta in self.llm.stream_chat(messages):
                     if self._cancel.is_set():
                         break
                     pending += delta
@@ -207,11 +280,15 @@ class CallSession:
             reply = "".join(reply_parts).strip()
             if reply and not self._cancel.is_set():
                 self.history.append(("assistant", reply))
+                self.memory.append_message(self.call_id, "assistant", reply)
                 log.info("agent: %s", reply)
             self.state = "listening"
 
-    def _messages(self, user_text: str) -> list[dict[str, str]]:
-        messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    def _messages(self, user_text: str, rag_context: str | None) -> list[dict[str, str]]:
+        system = SYSTEM_PROMPT
+        if rag_context:
+            system += "\n\nUse the following knowledge base context to answer. Do not invent facts:\n" + rag_context
+        messages: list[dict[str, str]] = [{"role": "system", "content": system}]
         for role, content in self.history:
             messages.append({"role": role, "content": content})
         messages.append({"role": "user", "content": user_text})
@@ -265,6 +342,8 @@ class CallSession:
 
     async def close(self) -> None:
         self._cancel.set()
+        if self.call_id:
+            self.memory.end_conversation(self.call_id)
         if self._response_task and not self._response_task.done():
             self._response_task.cancel()
         if self._sender_task and not self._sender_task.done():
