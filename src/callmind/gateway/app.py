@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
+import json
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 
 from ..admin.router import router as admin_router
 from ..admin.store import BusinessStore
@@ -13,9 +16,9 @@ from ..config import get_settings
 from ..llm.embeddings import MinimaxEmbeddings
 from ..llm.minimax import MinimaxChat
 from ..stt.engine import WhisperSTT
-from ..tools.router import ToolRouter
 from ..telephony import create_adapter
 from ..telephony.client import TelnyxAPI
+from ..tools.router import ToolRouter
 from ..tts.minimax import MinimaxTTS
 from .session import CallSession
 
@@ -98,15 +101,30 @@ app.include_router(admin_router)
 
 @app.post("/telnyx/webhook")
 async def telnyx_webhook(request: Request) -> dict:
-    body = await request.json()
-    data = body.get("data", {})
+    body = await request.body()
+    settings = app.state.settings
+    secret = settings.telnyx_webhook_secret
+    if not secret:
+        log.error("telnyx_webhook_secret not configured; rejecting webhook")
+        raise HTTPException(
+            503,
+            "webhook not enabled: set telnyx_webhook_secret to receive Telnyx events",
+        )
+    signature = request.headers.get("x-telnyx-signature", "")
+    if not signature or not hmac.compare_digest(
+        signature, hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    ):
+        log.warning("rejected telnyx webhook: bad or missing signature")
+        raise HTTPException(401, "invalid webhook signature")
+
+    event = json.loads(body)
+    data = event.get("data", {})
     event_type = data.get("event_type")
     payload = data.get("payload", {})
     log.info("telnyx webhook: %s", event_type)
 
     if event_type == "call.initiated":
         call_control_id = payload.get("call_control_id")
-        settings = app.state.settings
         if call_control_id and settings.public_ws_url:
             asyncio.create_task(
                 app.state.telnyx.answer_with_stream(call_control_id, settings.public_ws_url)

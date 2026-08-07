@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     telephony_provider: str = "telnyx"
     telnyx_api_key: str = ""
     telnyx_api_base: str = "https://api.telnyx.com"
+    telnyx_webhook_secret: str = ""
     public_ws_url: str = ""
 
     stt_model_size: str = "small"
