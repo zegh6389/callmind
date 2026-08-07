@@ -1,0 +1,50 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets and local config (NEVER commit)
+.env
+.env.local
+*.key
+
+# Runtime + tunnel logs
+*.log
+*.out
+*.err
+gateway.log
+gateway.err.log
+ngrok.out
+ngrok.err
+lt.out
+lt.err
+bore.out
+bore.err
+pinggy.out
+pinggy.err
+serveo.out
+serveo.err
+tunnel.log
+tunnel.out
+cloudflared.log
+cloudflared.out
+
+# Mock + test artifacts
+mock_call_out.wav
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# ngrok + tooling
+ngrok.yml

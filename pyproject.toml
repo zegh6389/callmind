@@ -1,0 +1,30 @@
+[project]
+name = "callmind"
+version = "0.1.0"
+description = "CallMind voice gateway: telephony -> STT -> LLM -> TTS"
+authors = [
+    { name = "zegh6389", email = "zegh6389@mylaurier.ca" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141.1",
+    "faster-whisper>=1.2.1",
+    "httpx>=0.28.1",
+    "numpy>=2.5.1",
+    "pydantic-settings>=2.14.2",
+    "scipy>=1.18.0",
+    "uvicorn[standard]>=0.52.1",
+]
+
+[project.scripts]
+callmind = "callmind.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.1",
+]
