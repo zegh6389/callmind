@@ -6,6 +6,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, WebSocket
 
+from ..admin.router import router as admin_router
+from ..admin.store import BusinessStore
+from ..brain.memory import MemoryStore
 from ..config import get_settings
 from ..llm.embeddings import MinimaxEmbeddings
 from ..llm.minimax import MinimaxChat
@@ -70,6 +73,8 @@ async def lifespan(app: FastAPI):
         api_key=settings.telnyx_api_key,
         base_url=settings.telnyx_api_base,
     )
+    app.state.business_store = BusinessStore(settings.memory_db_path)
+    app.state.memory = MemoryStore(settings.memory_db_path)
     log.info("gateway ready (provider=%s)", settings.telephony_provider)
     yield
     await llm.close()
@@ -84,6 +89,9 @@ app = FastAPI(title="CallMind Voice Gateway", lifespan=lifespan)
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok"}
+
+
+app.include_router(admin_router)
 
 
 @app.post("/telnyx/webhook")

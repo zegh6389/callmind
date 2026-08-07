@@ -106,3 +106,43 @@ class MemoryStore:
                 (caller_phone, business_id, business_id, limit),
             ).fetchall()
         return [(r["role"], r["content"]) for r in reversed(rows)]
+
+    def list_sessions(self, business_id: str | None = None, limit: int = 50) -> list[dict]:
+        with self._lock, self._connect() as conn:
+            if business_id:
+                rows = conn.execute(
+                    "SELECT call_id, business_id, caller_phone, started_at, ended_at, summary FROM conversations WHERE business_id = ? ORDER BY started_at DESC LIMIT ?",
+                    (business_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT call_id, business_id, caller_phone, started_at, ended_at, summary FROM conversations ORDER BY started_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_session(self, call_id: str) -> dict | None:
+        with self._lock, self._connect() as conn:
+            r = conn.execute(
+                "SELECT call_id, business_id, caller_phone, started_at, ended_at, summary FROM conversations WHERE call_id = ?",
+                (call_id,),
+            ).fetchone()
+            if not r:
+                return None
+            sess = dict(r)
+            msgs = conn.execute(
+                "SELECT role, content, ts FROM messages WHERE call_id = ? ORDER BY ts",
+                (call_id,),
+            ).fetchall()
+        sess["messages"] = [dict(m) for m in msgs]
+        return sess
+
+    def count_sessions(self, business_id: str | None = None) -> int:
+        with self._lock, self._connect() as conn:
+            if business_id:
+                r = conn.execute(
+                    "SELECT COUNT(*) AS n FROM conversations WHERE business_id = ?", (business_id,)
+                ).fetchone()
+            else:
+                r = conn.execute("SELECT COUNT(*) AS n FROM conversations").fetchone()
+        return int(r["n"])
