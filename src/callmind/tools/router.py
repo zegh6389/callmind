@@ -11,7 +11,7 @@ from .booking import BookingTool
 
 log = logging.getLogger("callmind.tools.router")
 
-_PHONE_RE = re.compile(r"(\+?\d[\d\-\s]{6,}\d)")
+_PHONE_RE = re.compile(r"(\+?\d[\d\-\s]{5,}\d)")
 _TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", re.IGNORECASE)
 _DATE_TOKEN_RE = re.compile(
     r"\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
@@ -24,7 +24,7 @@ def _extract_phone(text: str) -> str | None:
     if not m:
         return None
     digits = re.sub(r"\D", "", m.group(1))
-    if len(digits) < 7:
+    if not 10 <= len(digits) <= 15:
         return None
     return digits
 
