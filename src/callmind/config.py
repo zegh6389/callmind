@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     tts_api_key: str = ""
     tts_base_url: str = "https://api.minimax.io/v1"
     tts_endpoint: str = "/t2a_v2"
-    tts_model: str = "speech-2.8-flash"
+    tts_model: str = "speech-2.8-turbo"
     tts_voice_id: str = ""
     tts_sample_rate: int = 24000
     tts_speed: float = 1.0
