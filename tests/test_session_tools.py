@@ -268,7 +268,8 @@ def test_session_escalation_threshold_from_business(settings, tmp_path):
     from callmind.admin.store import BusinessStore
 
     db = BusinessStore(str(tmp_path / "biz2.db"))
-    biz = db.create_business("default", escalation_confidence=0.95)
+    biz = db.create_business("default")
+    db.update_business(biz["id"], escalation_confidence=0.95)
     s2 = settings.model_copy(update={"business_id": biz["id"]})
     # faq with conf 0.8: global threshold 0.55 would answer directly;
     # business threshold 0.95 must route to the clarify path instead.
