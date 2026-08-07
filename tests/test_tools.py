@@ -53,7 +53,9 @@ def test_booking_invalid_date_format(booking):
 
 
 def test_booking_rejects_past_date(booking):
-    past = (date.today() - timedelta(days=3)).isoformat()
+    from datetime import datetime
+
+    past = (datetime.now(UTC).date() - timedelta(days=3)).isoformat()
     res = await_(
         booking.run,
         {"title": "Retro", "date": past, "time": "10:00", "caller_name": "A"},
