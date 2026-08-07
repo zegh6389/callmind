@@ -181,7 +181,32 @@ def audioop_lin2ulaw(pcm_bytes: bytes) -> bytes:
     return audioop.lin2ulaw(pcm_bytes, 2)
 
 
-def test_session_sends_adapter_start_frame_first(settings):
+def test_session_parse_failure_does_not_clarify_loop(settings):
+    # Intent JSON malformed -> IntentChain falls back to smalltalk/0.0.
+    # Old behavior: conf < 0.55 -> permanent "rephrase that" trap.
+    # New: parse failure must still produce a real answer, no clarify.
+    llm = StubLLM(["not json at all", "Sure, I can help with that."])
+    stt = StubSTT("hi there")
+    tts = StubTTS()
+    ws = FakeWS()
+    ws.to_send = [
+        {"event": "start", "start": {"call_control_id": "c1", "from": "+15551111111", "to": "+15550000"}},
+    ]
+    session = CallSession(
+        ws=ws, adapter=StubAdapter(), settings=settings,
+        stt=stt, llm=llm, tts=tts, embeddings=StubEmbeddings(),
+    )
+
+    async def run():
+        await session._receive_loop()
+        session._vad.reset()
+        _push_audio(session)
+        _push_silence(session)
+        if session._response_task:
+            await asyncio.wait_for(session._response_task, timeout=2.0)
+
+    asyncio.run(run())
+    assert "rephrase" not in " ".join(tts.spoken).lower()
     # Pull-up handshake: provider requiring an explicit client 'start'
     # (Telnyx) must get it before any media flows.
     ws = FakeWS()

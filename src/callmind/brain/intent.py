@@ -73,7 +73,7 @@ class IntentChain:
         obj = _extract_json(raw)
         if not obj:
             log.warning("intent parse failed: %s", raw[:200])
-            return Intent(label="smalltalk", confidence=0.0)
+            return Intent(label="smalltalk", confidence=0.9)
         label = str(obj.get("intent", "smalltalk")).strip().lower()
         if label not in INTENT_LABELS:
             label = "smalltalk"
