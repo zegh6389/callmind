@@ -409,7 +409,6 @@ def test_embeddings_batches_large_input():
             pass
 
     # Replace AsyncClient factory at the module level.
-    import httpx
     from callmind.llm import embeddings as mod
 
     orig = mod.httpx.AsyncClient
@@ -490,11 +489,11 @@ def test_barge_in_fires_during_responding_state(settings):
 
 def test_send_queue_is_bounded():
     """_send_queue must have a maxsize to protect against OOM."""
+    import tempfile
+
     from callmind.config import Settings
     from callmind.gateway.session import CallSession
     from callmind.tools.router import ToolRouter
-
-    import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
         settings = Settings(

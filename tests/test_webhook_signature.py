@@ -167,7 +167,6 @@ def test_webhook_valid_signature_accepted_and_answers_call():
 
 def test_webhook_answer_failure_logged_not_swallowed(monkeypatch):
     """fire-and-forget answer task must add done_callback for audit log."""
-    from callmind.gateway import app as appmod
 
     logger = []
 
