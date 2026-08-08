@@ -74,12 +74,17 @@ class VectorStore:
         tmp_vec = self.vec_path.with_name(self.vec_path.name + ".tmp.npz")
         with tmp_index.open("w", encoding="utf-8") as f:
             json.dump(self._chunks, f, ensure_ascii=False, indent=2)
+        tmp_index.replace(self.index_path)
         if self._vectors is not None and self._vectors.size:
             np.savez_compressed(tmp_vec, v=self._vectors)
             tmp_vec.replace(self.vec_path)
-        elif tmp_vec.exists():
-            tmp_vec.unlink()
-        tmp_index.replace(self.index_path)
+        else:
+            # Empty snapshot: drop any stale vectors file so reloads don't
+            # resurrect rows that no longer exist in chunks.
+            if self.vec_path.exists():
+                self.vec_path.unlink()
+            if tmp_vec.exists():
+                tmp_vec.unlink()
 
     def reset(self) -> None:
         """Drop all in-memory chunks and vectors; on-disk index untouched."""

@@ -86,6 +86,25 @@ def test_vector_store_save_atomic_writes_and_replaces(tmp_path):
     assert not list(tmp_path.glob("**/*.tmp*"))
 
 
+def test_vector_store_save_atomic_empty_drops_stale_vectors(tmp_path):
+    store = VectorStore("biz", str(tmp_path))
+    store.add(["a"], [[1.0, 0.0]], source="t")
+    store.save_atomic()
+    assert store.vec_path.exists()
+    # Simulate clearing in-memory state (e.g. delete-kb-doc with no survivors).
+    store.reset()
+    store.save_atomic()
+    assert store.index_path.exists()
+    assert not store.vec_path.exists()
+    # Reload from disk and verify no stale vectors come back.
+    reloaded = VectorStore("biz", str(tmp_path))
+    assert reloaded.is_empty()
+    assert reloaded.search([1.0, 0.0], top_k=2) == []
+    # And the store is still usable after the empty snapshot.
+    reloaded.add(["c"], [[0.0, 1.0]], source="t")
+    assert [h[0] for h in reloaded.search([0.0, 1.0], top_k=1)] == ["c"]
+
+
 def test_vector_store_search_zero_row_corpus_returns_empty(tmp_path):
     import math
 
