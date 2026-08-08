@@ -9,6 +9,10 @@ import httpx
 log = logging.getLogger("callmind.llm")
 
 
+class ProviderError(RuntimeError):
+    """Raised when the upstream LLM returns a non-OK response or transport fails."""
+
+
 class MinimaxChat:
     def __init__(
         self,
@@ -45,7 +49,7 @@ class MinimaxChat:
         async with self._client.stream("POST", self.endpoint, json=payload) as resp:
             if resp.status_code != 200:
                 body = await resp.aread()
-                raise RuntimeError(f"MiniMax LLM HTTP {resp.status_code}: {body[:500]!r}")
+                raise ProviderError(f"MiniMax LLM HTTP {resp.status_code}: {body[:500]!r}")
             async for line in resp.aiter_lines():
                 line = line.strip()
                 if not line.startswith("data:"):

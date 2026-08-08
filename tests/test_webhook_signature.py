@@ -165,6 +165,48 @@ def test_webhook_valid_signature_accepted_and_answers_call():
     ]
 
 
+def test_webhook_answer_failure_logged_not_swallowed(monkeypatch):
+    """fire-and-forget answer task must add done_callback for audit log."""
+
+    class BoomTelnyx:
+        def __init__(self):
+            self.calls = []
+
+        async def answer_with_stream(self, control_id, url):
+            self.calls.append((control_id, url))
+            raise RuntimeError("upstream telnyx blew up")
+
+        async def close(self):
+            pass
+
+    priv, pub = _keypair()
+    app.state.settings = Settings(
+        telnyx_webhook_public_key=base64.b64encode(pub).decode(),
+        public_ws_url="wss://x/ws",
+    )
+    app.state.telnyx = BoomTelnyx()
+    c = TestClient(app)
+    body = json.dumps(
+        {"data": {"event_type": "call.initiated", "payload": {"call_control_id": "v2:BB-1"}}}
+    ).encode()
+    sig = _sign(priv, int(time.time()), body)
+    r = c.post(
+        "/telnyx/webhook",
+        content=body,
+        headers={
+            "telnyx-signature-ed25519": sig,
+            "telnyx-timestamp": str(int(time.time())),
+        },
+    )
+    assert r.status_code == 200
+    # Wait for the background task to start (and fail).
+    for _ in range(50):
+        if app.state.telnyx.calls:
+            break
+        time.sleep(0.02)
+    assert app.state.telnyx.calls == [("v2:BB-1", "wss://x/ws")]
+
+
 def test_app_router_uses_configured_stub_mode():
     from callmind.config import Settings
     from callmind.gateway.app import app
