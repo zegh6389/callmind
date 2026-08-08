@@ -99,10 +99,10 @@ class VectorStore:
         order = np.argsort(-scores)
         out: list[tuple[str, float, str]] = []
         for i in order:
-            if len(out) >= top_k:
-                break
             if scores[i] == -np.inf:
                 continue
+            if len(out) >= top_k:
+                break
             out.append(
                 (
                     self._chunks[i]["text"],
