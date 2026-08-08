@@ -86,10 +86,13 @@ def test_account_unavailable_when_stub_disabled():
 
 
 def test_router_dispatch_booking(router):
+    from datetime import datetime, timedelta
+
+    future = (datetime.now(UTC).date() + timedelta(days=7)).isoformat()
     res = await_(
         router.dispatch,
         "booking",
-        {"title": "X", "date": "2026-08-15", "time": "14:00", "caller_name": "A"},
+        {"title": "X", "date": future, "time": "14:00", "caller_name": "A"},
         call_id="c1",
         business_id="b1",
     )
