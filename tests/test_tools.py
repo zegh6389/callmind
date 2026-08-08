@@ -130,6 +130,15 @@ def test_router_phone_accepts_plus_country(router):
     assert params.get("caller_phone") == "14165550199"
 
 
+def test_router_phone_finds_valid_after_short_invalid(router):
+    # If the first candidate is too short, _extract_phone should keep scanning
+    # until it finds a valid 10-15 digit phone.
+    params = router.extract_params(
+        "account_status", "My order id is 1234567, call me at 555-123-4567"
+    )
+    assert params.get("caller_phone") == "5551234567"
+
+
 def test_router_extract_returns_empty_for_unknown(router):
     params = router.extract_params("smalltalk", "hi there")
     assert params == {}
