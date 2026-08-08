@@ -165,15 +165,11 @@ def test_webhook_valid_signature_accepted_and_answers_call():
     ]
 
 
-def test_webhook_answer_failure_logged_not_swallowed(monkeypatch):
+def test_webhook_answer_failure_logged_not_swallowed(monkeypatch, caplog):
     """fire-and-forget answer task must add done_callback for audit log."""
 
     class BoomTelnyx:
-        def __init__(self):
-            self.calls = []
-
         async def answer_with_stream(self, control_id, url):
-            self.calls.append((control_id, url))
             raise RuntimeError("upstream telnyx blew up")
 
         async def close(self):
@@ -190,21 +186,21 @@ def test_webhook_answer_failure_logged_not_swallowed(monkeypatch):
         {"data": {"event_type": "call.initiated", "payload": {"call_control_id": "v2:BB-1"}}}
     ).encode()
     sig = _sign(priv, int(time.time()), body)
-    r = c.post(
-        "/telnyx/webhook",
-        content=body,
-        headers={
-            "telnyx-signature-ed25519": sig,
-            "telnyx-timestamp": str(int(time.time())),
-        },
-    )
+    with caplog.at_level("ERROR", logger="callmind.gateway"):
+        r = c.post(
+            "/telnyx/webhook",
+            content=body,
+            headers={
+                "telnyx-signature-ed25519": sig,
+                "telnyx-timestamp": str(int(time.time())),
+            },
+        )
     assert r.status_code == 200
-    # Wait for the background task to start (and fail).
-    for _ in range(50):
-        if app.state.telnyx.calls:
-            break
-        time.sleep(0.02)
-    assert app.state.telnyx.calls == [("v2:BB-1", "wss://x/ws")]
+    # Background task must have logged the failure.
+    assert any(
+        "answer_with_stream failed" in rec.message and "upstream telnyx blew up" in rec.message
+        for rec in caplog.records
+    )
 
 
 def test_app_router_uses_configured_stub_mode():
