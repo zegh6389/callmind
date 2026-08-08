@@ -457,6 +457,65 @@ def test_llm_provider_error_falls_back_to_apology(settings):
     assert "sorry" in spoken or "trouble" in spoken or "having" in spoken
 
 
+def test_barge_in_fires_during_responding_state(settings):
+    """Without this fix, caller speech overlapping the LLM streaming phase
+    would not interrupt — barge-in only triggered when state == 'speaking'.
+
+    Repro: state = 'responding' (LLM streaming, no audio yet), caller
+    pushes audio via VAD. The barge-in handler must fire so the caller
+    hears the interruption.
+    """
+    tts = StubTTS()
+    ws = FakeWS()
+    ws.to_send = [
+        {"event": "start", "start": {"call_control_id": "c1", "from": "+15551111111", "to": "+15550000"}},
+    ]
+    session = CallSession(
+        ws=ws, adapter=StubAdapter(), settings=settings,
+        stt=StubSTT(""), llm=StubLLM(["x"]), tts=tts,
+        embeddings=StubEmbeddings(),
+    )
+
+    async def run():
+        await session._receive_loop()
+        session.state = "responding"
+        session._vad.reset()
+        _push_audio(session)
+        _push_silence(session)
+        await asyncio.sleep(0.05)
+
+    asyncio.run(run())
+    assert session._cancel.is_set()
+
+
+def test_send_queue_is_bounded():
+    """_send_queue must have a maxsize to protect against OOM."""
+    from callmind.config import Settings
+    from callmind.gateway.session import CallSession
+    from callmind.tools.router import ToolRouter
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        settings = Settings(
+            memory_db_path=tmp + "/x.db",
+            kb_dir=tmp + "/kb",
+            greeting="",
+        )
+        session = CallSession(
+            ws=FakeWS(),
+            adapter=StubAdapter(),
+            settings=settings,
+            stt=StubSTT(""),
+            llm=StubLLM(["x"]),
+            tts=StubTTS(),
+            embeddings=StubEmbeddings(),
+            tool_router=ToolRouter(stub_mode=True),
+        )
+        assert session._send_queue.maxsize > 0
+        assert session._send_queue.maxsize <= 512
+
+
 @pytest.fixture
 def settings(tmp_path):
     return Settings(

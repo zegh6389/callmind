@@ -192,8 +192,8 @@ class CallSession:
             if vad_event is None:
                 continue
             if vad_event.type == VADEventType.SPEECH_START:
-                if self.state == "speaking":
-                    self._barge_in()
+            if self.state in ("speaking", "responding"):
+                self._barge_in()
                 self._speech_chunks = list(self._preroll)
                 self._speech_chunks.append(frame)
             elif vad_event.type == VADEventType.SPEECH_END:
