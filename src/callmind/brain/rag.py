@@ -68,6 +68,29 @@ class VectorStore:
         elif self.vec_path.exists():
             self.vec_path.unlink()
 
+    def save_atomic(self) -> None:
+        """Persist via temp+rename so on-disk state is never half-written."""
+        tmp_index = self.index_path.with_suffix(".json.tmp")
+        tmp_vec = self.vec_path.with_name(self.vec_path.name + ".tmp.npz")
+        with tmp_index.open("w", encoding="utf-8") as f:
+            json.dump(self._chunks, f, ensure_ascii=False, indent=2)
+        tmp_index.replace(self.index_path)
+        if self._vectors is not None and self._vectors.size:
+            np.savez_compressed(tmp_vec, v=self._vectors)
+            tmp_vec.replace(self.vec_path)
+        else:
+            # Empty snapshot: drop any stale vectors file so reloads don't
+            # resurrect rows that no longer exist in chunks.
+            if self.vec_path.exists():
+                self.vec_path.unlink()
+            if tmp_vec.exists():
+                tmp_vec.unlink()
+
+    def reset(self) -> None:
+        """Drop all in-memory chunks and vectors; on-disk index untouched."""
+        self._chunks = []
+        self._vectors = None
+
     def is_empty(self) -> bool:
         return len(self._chunks) == 0
 
@@ -92,8 +115,24 @@ class VectorStore:
         q_norm = float(np.linalg.norm(q))
         if q_norm == 0.0:
             return []
-        scores = (self._vectors @ q) / (
-            np.linalg.norm(self._vectors, axis=1) * q_norm + 1e-12
-        )
-        idx = np.argsort(scores)[::-1][:top_k]
-        return [(self._chunks[i]["text"], float(scores[i]), self._chunks[i].get("source", "")) for i in idx]
+        row_norms = np.linalg.norm(self._vectors, axis=1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            scores = (self._vectors @ q) / (row_norms * q_norm + 1e-12)
+        scores = np.where(np.isfinite(scores), scores, -np.inf)
+        # Drop rows whose stored vector is itself zero (no signal to match).
+        scores = np.where(row_norms > 0, scores, -np.inf)
+        order = np.argsort(-scores)
+        out: list[tuple[str, float, str]] = []
+        for i in order:
+            if scores[i] == -np.inf:
+                continue
+            if len(out) >= top_k:
+                break
+            out.append(
+                (
+                    self._chunks[i]["text"],
+                    float(scores[i]),
+                    self._chunks[i].get("source", ""),
+                )
+            )
+        return out

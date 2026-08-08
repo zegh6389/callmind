@@ -81,6 +81,9 @@ class MinimaxTTS:
                 audio_hex = (obj.get("data") or {}).get("audio")
                 if audio_hex:
                     yield bytes.fromhex(audio_hex)
+                status = (obj.get("data") or {}).get("status")
+                if status in ("finished", "done", "complete"):
+                    break
 
     async def close(self) -> None:
         await self._client.aclose()

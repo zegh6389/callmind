@@ -142,14 +142,25 @@ class BusinessStore:
             conn.commit()
         return cur.rowcount > 0
 
-    def list_chunks_for_business(self, business_id: str) -> list[tuple[str, str]]:
+    def list_chunks_for_business(
+        self, business_id: str, exclude_doc_id: str | None = None
+    ) -> list[tuple[str, str]]:
         """Return (chunk_id, text) for all chunks of a business. Used by KB rebuild."""
         with self._lock, self._connect() as conn:
-            rows = conn.execute(
-                "SELECT id, text FROM kb_chunks WHERE business_id = ? ORDER BY doc_id, chunk_index",
-                (business_id,),
-            ).fetchall()
+            if exclude_doc_id is None:
+                rows = conn.execute(
+                    "SELECT id, text FROM kb_chunks WHERE business_id = ? ORDER BY doc_id, chunk_index",
+                    (business_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, text FROM kb_chunks WHERE business_id = ? AND doc_id != ? "
+                    "ORDER BY doc_id, chunk_index",
+                    (business_id, exclude_doc_id),
+                ).fetchall()
         return [(r["id"], r["text"]) for r in rows]
 
-    def list_chunk_texts(self, business_id: str) -> list[str]:
-        return [t for _, t in self.list_chunks_for_business(business_id)]
+    def list_chunk_texts(
+        self, business_id: str, exclude_doc_id: str | None = None
+    ) -> list[str]:
+        return [t for _, t in self.list_chunks_for_business(business_id, exclude_doc_id)]

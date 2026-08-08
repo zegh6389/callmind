@@ -21,7 +21,7 @@ from ..audio.vad import EnergyVAD, VADEventType
 from ..brain import IntentChain, MemoryStore, VectorStore
 from ..config import Settings
 from ..llm.embeddings import MinimaxEmbeddings
-from ..llm.minimax import MinimaxChat
+from ..llm.minimax import MinimaxChat, ProviderError
 from ..stt.engine import WhisperSTT
 from ..telephony.base import CallStart, CallStop, MediaChunk, TelephonyAdapter
 from ..tools.router import ToolRouter
@@ -87,7 +87,7 @@ class CallSession:
 
         self.intent_chain = IntentChain(llm)
         self.memory = MemoryStore(settings.memory_db_path)
-        self.kb = VectorStore(settings.business_id, settings.kb_dir)
+        self.kb: VectorStore | None = None
         self.tool_router = tool_router or ToolRouter(stub_mode=self.settings.tool_stub_mode)
 
         self.history: deque[tuple[str, str]] = deque(maxlen=settings.memory_window)
@@ -102,7 +102,7 @@ class CallSession:
         self._speech_chunks: list[np.ndarray] = []
         self._parked_utterance: np.ndarray | None = None
         self._frame_leftover = b""
-        self._send_queue: asyncio.Queue[tuple[str, bytes | None]] = asyncio.Queue()
+        self._send_queue: asyncio.Queue[tuple[str, bytes | None]] = asyncio.Queue(maxsize=200)
         self._cancel = asyncio.Event()
         self._response_task: asyncio.Task | None = None
         self._sender_task: asyncio.Task | None = None
@@ -156,6 +156,7 @@ class CallSession:
         if not row:
             return
         self._business = row
+        self.kb = VectorStore(self.settings.business_id, self.settings.kb_dir)
         if row.get("escalation_confidence") is not None:
             self._escalation_threshold = float(row["escalation_confidence"])
 
@@ -192,7 +193,7 @@ class CallSession:
             if vad_event is None:
                 continue
             if vad_event.type == VADEventType.SPEECH_START:
-                if self.state == "speaking":
+                if self.state in ("speaking", "responding"):
                     self._barge_in()
                 self._speech_chunks = list(self._preroll)
                 self._speech_chunks.append(frame)
@@ -268,7 +269,7 @@ class CallSession:
             elif result and not result.success:
                 log.warning("tool %s failed: %s", intent.label, result.error)
                 rag_context = f"[Tool {intent.label} failed: {result.error}]"
-        if intent and intent.label == "faq" and not self.kb.is_empty():
+        if intent and intent.label == "faq" and self.kb is not None and not self.kb.is_empty():
             rag_context = await self._retrieve_context(user_text)
         await self._speak_llm_reply(user_text, rag_context=rag_context)
 
@@ -320,6 +321,11 @@ class CallSession:
                     await self._speak_text(pending)
         except asyncio.CancelledError:
             raise
+        except ProviderError:
+            log.exception("LLM provider error")
+            apology = "Sorry, I'm having trouble reaching our service. Please try again in a moment."
+            await self._speak_text(apology)
+            reply_parts.append(apology)
         except Exception:
             log.exception("response generation failed")
         finally:

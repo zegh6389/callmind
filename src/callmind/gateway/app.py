@@ -153,9 +153,17 @@ async def telnyx_webhook(request: Request) -> dict:
     if event_type == "call.initiated":
         call_control_id = payload.get("call_control_id")
         if call_control_id and settings.public_ws_url:
-            asyncio.create_task(
+            task = asyncio.create_task(
                 app.state.telnyx.answer_with_stream(call_control_id, settings.public_ws_url)
             )
+
+            def _log_task_failure(t: asyncio.Task) -> None:
+                if t.cancelled():
+                    return
+                if exc := t.exception():
+                    log.error("telnyx answer_with_stream failed: %s", exc)
+
+            task.add_done_callback(_log_task_failure)
         else:
             log.error("cannot answer call: missing call_control_id or public_ws_url")
     return {"status": "ok"}

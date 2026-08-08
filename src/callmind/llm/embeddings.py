@@ -15,10 +15,12 @@ class MinimaxEmbeddings:
         endpoint: str = "/v1/embeddings",
         model: str = "embo-01",
         embedding_type: str = "db",
+        batch_size: int = 32,
     ) -> None:
         self.endpoint = endpoint
         self.model = model
         self.embedding_type = embedding_type
+        self.batch_size = max(1, batch_size)
         self._client = httpx.AsyncClient(
             base_url=base_url,
             headers={"Authorization": f"Bearer {api_key}"},
@@ -28,22 +30,26 @@ class MinimaxEmbeddings:
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        payload = {
-            "model": self.model,
-            "texts": texts,
-            "type": self.embedding_type,
-        }
-        resp = await self._client.post(self.endpoint, json=payload)
-        if resp.status_code != 200:
-            raise RuntimeError(f"embeddings HTTP {resp.status_code}: {resp.text[:500]}")
-        obj = resp.json()
-        base = obj.get("base_resp", {})
-        if base.get("status_code", 0) != 0:
-            raise RuntimeError(f"embeddings error: {base}")
-        vectors = obj.get("vectors") or []
-        if not vectors:
-            raise RuntimeError("embeddings returned no vectors")
-        return vectors
+        all_vecs: list[list[float]] = []
+        for i in range(0, len(texts), self.batch_size):
+            batch = texts[i : i + self.batch_size]
+            payload = {
+                "model": self.model,
+                "texts": batch,
+                "type": self.embedding_type,
+            }
+            resp = await self._client.post(self.endpoint, json=payload)
+            if resp.status_code != 200:
+                raise RuntimeError(f"embeddings HTTP {resp.status_code}: {resp.text[:500]}")
+            obj = resp.json()
+            base = obj.get("base_resp", {})
+            if base.get("status_code", 0) != 0:
+                raise RuntimeError(f"embeddings error: {base}")
+            vectors = obj.get("vectors") or []
+            if not vectors:
+                raise RuntimeError("embeddings returned no vectors")
+            all_vecs.extend(vectors)
+        return all_vecs
 
     async def close(self) -> None:
         await self._client.aclose()

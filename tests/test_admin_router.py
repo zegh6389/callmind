@@ -16,7 +16,12 @@ class FakeEmbeddings:
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         self.calls.append(texts)
-        return [[0.1 * (i + 1) for _ in range(self.dim)] for i, _ in enumerate(texts)]
+        # Stable, content-derived vector; identical text always maps to the
+        # same vector regardless of position in the batch.
+        return [
+            [float((sum(ord(c) for c in t) + j) % 97) / 100.0 for j in range(self.dim)]
+            for t in texts
+        ]
 
     async def close(self) -> None:
         pass

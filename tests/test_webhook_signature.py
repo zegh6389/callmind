@@ -7,6 +7,7 @@ verified against the account's public key. Replay window enforced.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import time
@@ -163,6 +164,56 @@ def test_webhook_valid_signature_accepted_and_answers_call():
     assert app.state.telnyx.calls == [
         ("v2:CC-AUTH-1", "wss://voice.example.com/ws/call")
     ]
+
+
+def test_webhook_answer_failure_logged_not_swallowed(monkeypatch, caplog):
+    """fire-and-forget answer task must add done_callback for audit log."""
+
+    class BoomTelnyx:
+        def __init__(self) -> None:
+            self.done = asyncio.Event()
+
+        async def answer_with_stream(self, control_id, url):
+            try:
+                raise RuntimeError("upstream telnyx blew up")
+            finally:
+                self.done.set()
+
+        async def close(self):
+            pass
+
+    priv, pub = _keypair()
+    app.state.settings = Settings(
+        telnyx_webhook_public_key=base64.b64encode(pub).decode(),
+        public_ws_url="wss://x/ws",
+    )
+    boom = BoomTelnyx()
+    app.state.telnyx = boom
+    c = TestClient(app)
+    body = json.dumps(
+        {"data": {"event_type": "call.initiated", "payload": {"call_control_id": "v2:BB-1"}}}
+    ).encode()
+    ts = int(time.time())
+    sig = _sign(priv, ts, body)
+    with caplog.at_level("ERROR", logger="callmind.gateway"):
+        r = c.post(
+            "/telnyx/webhook",
+            content=body,
+            headers={
+                "telnyx-signature-ed25519": sig,
+                "telnyx-timestamp": str(ts),
+            },
+        )
+    assert r.status_code == 200
+    # Synchronize with the background task before asserting log output.
+    deadline = time.time() + 5
+    while not boom.done.is_set() and time.time() < deadline:
+        time.sleep(0.05)
+    assert boom.done.is_set(), "background task did not finish within 5s"
+    assert any(
+        "answer_with_stream failed" in rec.message and "upstream telnyx blew up" in rec.message
+        for rec in caplog.records
+    )
 
 
 def test_app_router_uses_configured_stub_mode():

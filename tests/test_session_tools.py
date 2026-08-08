@@ -378,6 +378,185 @@ def test_session_closes_websocket_when_done(settings):
     assert ws.closed
 
 
+def test_embeddings_batches_large_input():
+    """Large input must be split by config.embedding_batch_size."""
+
+    from callmind.llm.embeddings import MinimaxEmbeddings
+
+    seen: list[tuple[str, ...]] = []
+
+    class FakeResp:
+        def __init__(self, batch):
+            self._batch = batch
+            self.status_code = 200
+
+        def json(self):
+            return {
+                "base_resp": {"status_code": 0},
+                "vectors": [[0.1] * 4 for _ in self._batch],
+            }
+
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            self.batches = []
+
+        async def post(self, url, json):
+            seen.append(tuple(json["texts"]))
+            return FakeResp(json["texts"])
+
+        async def aclose(self):
+            pass
+
+    # Replace AsyncClient factory at the module level.
+    from callmind.llm import embeddings as mod
+
+    orig = mod.httpx.AsyncClient
+    mod.httpx.AsyncClient = FakeClient  # type: ignore[assignment]
+    try:
+        emb = MinimaxEmbeddings(api_key="x", base_url="http://x", batch_size=3)
+        out = asyncio.run(emb.embed([f"text{i}" for i in range(7)]))
+        assert out == [[0.1] * 4] * 7
+        assert [len(b) for b in seen] == [3, 3, 1]
+    finally:
+        mod.httpx.AsyncClient = orig  # type: ignore[assignment]
+
+
+def test_embeddings_batches_fail_atomically():
+    """If any batch fails, no partial result is returned."""
+
+    from callmind.llm.embeddings import MinimaxEmbeddings
+
+    class FakeResp:
+        def __init__(self, batch, status):
+            self._batch = batch
+            self.status_code = status
+            self.text = "error"
+
+        def json(self):
+            return {
+                "base_resp": {"status_code": 0},
+                "vectors": [[0.1] * 4 for _ in self._batch],
+            }
+
+    class FlakyClient:
+        def __init__(self, *a, **kw):
+            self.calls = 0
+
+        async def post(self, url, json):
+            self.calls += 1
+            # First batch OK, second batch fails.
+            if self.calls == 2:
+                return FakeResp(json["texts"], 500)
+            return FakeResp(json["texts"], 200)
+
+        async def aclose(self):
+            pass
+
+    from callmind.llm import embeddings as mod
+
+    orig = mod.httpx.AsyncClient
+    mod.httpx.AsyncClient = FlakyClient  # type: ignore[assignment]
+    try:
+        emb = MinimaxEmbeddings(api_key="x", base_url="http://x", batch_size=3)
+        with pytest.raises(RuntimeError, match="HTTP 500"):
+            asyncio.run(emb.embed([f"text{i}" for i in range(5)]))
+    finally:
+        mod.httpx.AsyncClient = orig  # type: ignore[assignment]
+
+
+def test_llm_provider_error_falls_back_to_apology(settings):
+    """MiniMax/provider error -> user hears a graceful apology, not silence."""
+
+    class FlakyLLM:
+        async def stream_chat(self, messages, temperature=None, max_tokens=None):
+            from callmind.llm.minimax import ProviderError
+
+            raise ProviderError("MiniMax LLM HTTP 503")
+            yield  # unused, makes it a generator
+
+    tts = StubTTS()
+    ws = FakeWS()
+    ws.to_send = [
+        {"event": "start", "start": {"call_control_id": "c1", "from": "+15551111111", "to": "+15550000"}},
+    ]
+    session = CallSession(
+        ws=ws, adapter=StubAdapter(), settings=settings,
+        stt=StubSTT("hi there"), llm=FlakyLLM(), tts=tts,
+        embeddings=StubEmbeddings(),
+    )
+
+    async def run():
+        await session._receive_loop()
+        session._vad.reset()
+        _push_audio(session)
+        _push_silence(session)
+        if session._response_task:
+            await asyncio.wait_for(session._response_task, timeout=2.0)
+
+    asyncio.run(run())
+    spoken = " ".join(tts.spoken).lower()
+    assert "sorry" in spoken or "trouble" in spoken or "having" in spoken
+
+
+def test_barge_in_fires_during_responding_state(settings):
+    """Without this fix, caller speech overlapping the LLM streaming phase
+    would not interrupt — barge-in only triggered when state == 'speaking'.
+
+    Repro: state = 'responding' (LLM streaming, no audio yet), caller
+    pushes audio via VAD. The barge-in handler must fire so the caller
+    hears the interruption.
+    """
+    tts = StubTTS()
+    ws = FakeWS()
+    ws.to_send = [
+        {"event": "start", "start": {"call_control_id": "c1", "from": "+15551111111", "to": "+15550000"}},
+    ]
+    session = CallSession(
+        ws=ws, adapter=StubAdapter(), settings=settings,
+        stt=StubSTT(""), llm=StubLLM(["x"]), tts=tts,
+        embeddings=StubEmbeddings(),
+    )
+
+    async def run():
+        await session._receive_loop()
+        session.state = "responding"
+        session._vad.reset()
+        _push_audio(session)
+        _push_silence(session)
+        await asyncio.sleep(0.05)
+
+    asyncio.run(run())
+    assert session._cancel.is_set()
+
+
+def test_send_queue_is_bounded():
+    """_send_queue must have a maxsize to protect against OOM."""
+    import tempfile
+
+    from callmind.config import Settings
+    from callmind.gateway.session import CallSession
+    from callmind.tools.router import ToolRouter
+
+    with tempfile.TemporaryDirectory() as tmp:
+        settings = Settings(
+            memory_db_path=tmp + "/x.db",
+            kb_dir=tmp + "/kb",
+            greeting="",
+        )
+        session = CallSession(
+            ws=FakeWS(),
+            adapter=StubAdapter(),
+            settings=settings,
+            stt=StubSTT(""),
+            llm=StubLLM(["x"]),
+            tts=StubTTS(),
+            embeddings=StubEmbeddings(),
+            tool_router=ToolRouter(stub_mode=True),
+        )
+        assert session._send_queue.maxsize > 0
+        assert session._send_queue.maxsize <= 512
+
+
 @pytest.fixture
 def settings(tmp_path):
     return Settings(
