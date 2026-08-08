@@ -63,6 +63,15 @@ def test_vector_store_zero_query_returns_empty_not_nan(tmp_path):
     assert not any(isinstance(h[1], float) and math.isnan(h[1]) for h in [])
 
 
+def test_vector_store_reset_clears_rows(tmp_path):
+    store = VectorStore("biz", str(tmp_path))
+    store.add(["a", "b"], [[1.0, 0.0], [0.0, 1.0]], source="t")
+    assert not store.is_empty()
+    store.reset()
+    assert store.is_empty()
+    assert store.search([1.0, 0.0], top_k=2) == []
+
+
 def test_vector_store_search_zero_row_corpus_returns_empty(tmp_path):
     import math
 
