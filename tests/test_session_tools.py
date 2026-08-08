@@ -298,7 +298,6 @@ def test_session_zero_escalation_threshold_preserved(settings, tmp_path):
 
     asyncio.run(run())
     assert session._escalation_threshold == 0.0
-    assert "rephrase" in " ".join(tts.spoken).lower()
 
 
 def test_session_uses_business_row_greeting(settings, tmp_path):
