@@ -382,25 +382,47 @@ def test_embeddings_batches_large_input():
     """Large input must be split by config.embedding_batch_size."""
     import asyncio
 
-    from callmind.llm import embeddings as mod
     from callmind.llm.embeddings import MinimaxEmbeddings
 
     seen: list[tuple[str, ...]] = []
 
-    async def fake_embed(self, texts):
-        seen.append(tuple(texts))
-        return [[0.1] * 4 for _ in texts]
+    class FakeResp:
+        def __init__(self, batch):
+            self._batch = batch
 
-    orig = mod.MinimaxEmbeddings.embed
-    mod.MinimaxEmbeddings.embed = fake_embed  # type: ignore[assignment]
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "base_resp": {"status_code": 0},
+                "vectors": [[0.1] * 4 for _ in self._batch],
+            }
+
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            self.batches = []
+
+        async def post(self, url, json):
+            seen.append(tuple(json["texts"]))
+            return FakeResp(json["texts"])
+
+        async def aclose(self):
+            pass
+
+    # Replace AsyncClient factory at the module level.
+    import httpx
+    from callmind.llm import embeddings as mod
+
+    orig = mod.httpx.AsyncClient
+    mod.httpx.AsyncClient = FakeClient  # type: ignore[assignment]
     try:
-        emb = MinimaxEmbeddings(api_key="x", base_url="http://x")
+        emb = MinimaxEmbeddings(api_key="x", base_url="http://x", batch_size=3)
         out = asyncio.run(emb.embed([f"text{i}" for i in range(7)]))
         assert out == [[0.1] * 4] * 7
-        # 7 texts, batch size 3 -> 3, 3, 1
         assert [len(b) for b in seen] == [3, 3, 1]
     finally:
-        mod.MinimaxEmbeddings.embed = orig  # type: ignore[assignment]
+        mod.httpx.AsyncClient = orig  # type: ignore[assignment]
 
 
 def test_llm_provider_error_falls_back_to_apology(settings):
