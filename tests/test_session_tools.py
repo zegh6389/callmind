@@ -378,6 +378,31 @@ def test_session_closes_websocket_when_done(settings):
     assert ws.closed
 
 
+def test_embeddings_batches_large_input():
+    """Large input must be split by config.embedding_batch_size."""
+    import asyncio
+
+    from callmind.llm import embeddings as mod
+    from callmind.llm.embeddings import MinimaxEmbeddings
+
+    seen: list[tuple[str, ...]] = []
+
+    async def fake_embed(self, texts):
+        seen.append(tuple(texts))
+        return [[0.1] * 4 for _ in texts]
+
+    orig = mod.MinimaxEmbeddings.embed
+    mod.MinimaxEmbeddings.embed = fake_embed  # type: ignore[assignment]
+    try:
+        emb = MinimaxEmbeddings(api_key="x", base_url="http://x")
+        out = asyncio.run(emb.embed([f"text{i}" for i in range(7)]))
+        assert out == [[0.1] * 4] * 7
+        # 7 texts, batch size 3 -> 3, 3, 1
+        assert [len(b) for b in seen] == [3, 3, 1]
+    finally:
+        mod.MinimaxEmbeddings.embed = orig  # type: ignore[assignment]
+
+
 def test_llm_provider_error_falls_back_to_apology(settings):
     """MiniMax/provider error -> user hears a graceful apology, not silence."""
 
