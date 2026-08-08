@@ -68,6 +68,11 @@ class VectorStore:
         elif self.vec_path.exists():
             self.vec_path.unlink()
 
+    def reset(self) -> None:
+        """Drop all in-memory chunks and vectors; on-disk index untouched."""
+        self._chunks = []
+        self._vectors = None
+
     def is_empty(self) -> bool:
         return len(self._chunks) == 0
 

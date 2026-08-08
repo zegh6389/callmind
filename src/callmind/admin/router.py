@@ -160,8 +160,7 @@ async def delete_kb_doc(request: Request, business_id: str, doc_id: str) -> None
     except Exception as e:
         raise HTTPException(502, f"re-embed failed: {e}") from e
     # Rebuild replaces the whole index; drop any stale on-disk data first.
-    store._chunks = []
-    store._vectors = None
+    store.reset()
     store.add(texts, vectors, source="rebuild")
     store.save()
 
