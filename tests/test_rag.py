@@ -70,6 +70,20 @@ def test_vector_store_reset_clears_rows(tmp_path):
     store.reset()
     assert store.is_empty()
     assert store.search([1.0, 0.0], top_k=2) == []
+    # reset must clear both state and vectors, so the store remains usable.
+    store.add(["c"], [[0.0, 1.0]], source="t")
+    assert [h[0] for h in store.search([0.0, 1.0], top_k=1)] == ["c"]
+
+
+def test_vector_store_save_atomic_writes_and_replaces(tmp_path):
+    store = VectorStore("biz", str(tmp_path))
+    store.add(["a"], [[1.0, 0.0]], source="t")
+    store.save_atomic()
+    assert store.index_path.exists()
+    assert store.vec_path.exists()
+    # No stray temp files left behind.
+    assert not store.index_path.with_suffix(".json.tmp").exists()
+    assert not list(tmp_path.glob("**/*.tmp*"))
 
 
 def test_vector_store_search_zero_row_corpus_returns_empty(tmp_path):

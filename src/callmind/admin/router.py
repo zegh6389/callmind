@@ -143,26 +143,29 @@ async def delete_kb_doc(request: Request, business_id: str, doc_id: str) -> None
     doc = bs.get_doc(doc_id)
     if not doc or doc["business_id"] != business_id:
         raise HTTPException(404, "doc not found")
-    bs.delete_doc(doc_id)
-    # Rebuild vector store from remaining chunks in DB.
-    texts = bs.list_chunk_texts(business_id)
+    # Stage 1: rebuild the new vector index in memory + atomically on disk
+    # BEFORE touching the source-of-truth DB. If anything below fails the
+    # DB row stays and the index can be rebuilt on the next attempt.
+    texts = bs.list_chunk_texts(business_id, exclude_doc_id=doc_id)
     store = VectorStore(business_id, _kb_base(request))
     if not texts:
-        # clear on-disk index
-
         for f in (store.index_path, store.vec_path):
             if f.exists():
                 f.unlink()
-        return
-    embeddings = request.app.state.embeddings
-    try:
-        vectors = await embeddings.embed(texts)
-    except Exception as e:
-        raise HTTPException(502, f"re-embed failed: {e}") from e
-    # Rebuild replaces the whole index; drop any stale on-disk data first.
-    store.reset()
-    store.add(texts, vectors, source="rebuild")
-    store.save()
+    else:
+        embeddings = request.app.state.embeddings
+        try:
+            vectors = await embeddings.embed(texts)
+        except Exception as e:
+            raise HTTPException(502, f"re-embed failed: {e}") from e
+        store.reset()
+        store.add(texts, vectors, source="rebuild")
+        try:
+            store.save_atomic()
+        except OSError as e:
+            raise HTTPException(500, f"persist index failed: {e}") from e
+    # Stage 2: only commit the DB delete once the new index is safely on disk.
+    bs.delete_doc(doc_id)
 
 
 # --- sessions + analytics ---

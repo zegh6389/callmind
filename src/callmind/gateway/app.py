@@ -158,6 +158,8 @@ async def telnyx_webhook(request: Request) -> dict:
             )
 
             def _log_task_failure(t: asyncio.Task) -> None:
+                if t.cancelled():
+                    return
                 if exc := t.exception():
                     log.error("telnyx answer_with_stream failed: %s", exc)
 
