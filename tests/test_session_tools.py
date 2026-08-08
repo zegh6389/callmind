@@ -389,9 +389,7 @@ def test_embeddings_batches_large_input():
     class FakeResp:
         def __init__(self, batch):
             self._batch = batch
-
-        def raise_for_status(self):
-            pass
+            self.status_code = 200
 
         def json(self):
             return {
