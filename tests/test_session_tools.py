@@ -265,6 +265,42 @@ def test_session_uses_business_row_greeting_via_run(settings, tmp_path):
     assert tts.spoken and tts.spoken[0] == "Ahoy matey!"
 
 
+def test_session_zero_escalation_threshold_preserved(settings, tmp_path):
+    # explicit 0.0 (must surface -> every utterance clarifies); not None.
+    from callmind.admin.store import BusinessStore
+
+    db = BusinessStore(str(tmp_path / "biz_zero.db"))
+    biz = db.create_business("default")
+    db.update_business(biz["id"], escalation_confidence=0.0)
+    s2 = settings.model_copy(update={"business_id": biz["id"]})
+    llm = StubLLM([
+        '{"intent":"smalltalk","confidence":0.0}',
+        "Sure.",
+    ])
+    tts = StubTTS()
+    ws = FakeWS()
+    ws.to_send = [
+        {"event": "start", "start": {"call_control_id": "c1", "from": "+15551111111", "to": "+15550000"}},
+    ]
+    session = CallSession(
+        ws=ws, adapter=StubAdapter(), settings=s2,
+        stt=StubSTT("hi there"), llm=llm, tts=tts,
+        embeddings=StubEmbeddings(), business_store=db,
+    )
+
+    async def run():
+        await session._receive_loop()
+        session._vad.reset()
+        _push_audio(session)
+        _push_silence(session)
+        if session._response_task:
+            await asyncio.wait_for(session._response_task, timeout=2.0)
+
+    asyncio.run(run())
+    assert session._escalation_threshold == 0.0
+    assert "rephrase" in " ".join(tts.spoken).lower()
+
+
 def test_session_uses_business_row_greeting(settings, tmp_path):
     from callmind.admin.store import BusinessStore
 

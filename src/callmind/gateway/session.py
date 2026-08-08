@@ -156,7 +156,7 @@ class CallSession:
         if not row:
             return
         self._business = row
-        if row.get("escalation_confidence"):
+        if row.get("escalation_confidence") is not None:
             self._escalation_threshold = float(row["escalation_confidence"])
 
     def _seed_history(self) -> None:
