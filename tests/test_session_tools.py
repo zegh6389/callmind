@@ -380,7 +380,7 @@ def test_session_closes_websocket_when_done(settings):
 
 def test_embeddings_batches_large_input():
     """Large input must be split by config.embedding_batch_size."""
-    import asyncio
+    import tempfile
 
     from callmind.llm.embeddings import MinimaxEmbeddings
 
@@ -418,6 +418,50 @@ def test_embeddings_batches_large_input():
         out = asyncio.run(emb.embed([f"text{i}" for i in range(7)]))
         assert out == [[0.1] * 4] * 7
         assert [len(b) for b in seen] == [3, 3, 1]
+    finally:
+        mod.httpx.AsyncClient = orig  # type: ignore[assignment]
+
+
+def test_embeddings_batches_fail_atomically():
+    """If any batch fails, no partial result is returned."""
+    import tempfile
+
+    from callmind.llm.embeddings import MinimaxEmbeddings
+
+    class FakeResp:
+        def __init__(self, batch, status):
+            self._batch = batch
+            self.status_code = status
+            self.text = "error"
+
+        def json(self):
+            return {
+                "base_resp": {"status_code": 0},
+                "vectors": [[0.1] * 4 for _ in self._batch],
+            }
+
+    class FlakyClient:
+        def __init__(self, *a, **kw):
+            self.calls = 0
+
+        async def post(self, url, json):
+            self.calls += 1
+            # First batch OK, second batch fails.
+            if self.calls == 2:
+                return FakeResp(json["texts"], 500)
+            return FakeResp(json["texts"], 200)
+
+        async def aclose(self):
+            pass
+
+    from callmind.llm import embeddings as mod
+
+    orig = mod.httpx.AsyncClient
+    mod.httpx.AsyncClient = FlakyClient  # type: ignore[assignment]
+    try:
+        emb = MinimaxEmbeddings(api_key="x", base_url="http://x", batch_size=3)
+        with pytest.raises(RuntimeError, match="HTTP 500"):
+            asyncio.run(emb.embed([f"text{i}" for i in range(5)]))
     finally:
         mod.httpx.AsyncClient = orig  # type: ignore[assignment]
 
