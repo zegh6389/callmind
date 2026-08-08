@@ -1,16 +1,20 @@
-"""Telnyx webhook signature verification (F1).
+"""Telnyx V2 webhook verification (Ed25519).
 
-Gateway must reject unsigned/forged Telnyx webhooks, else any internet
-caller can POST call.initiated and make the gateway answer calls.
+Per Telnyx V2 docs: headers `telnyx-signature-ed25519` (Base64 Ed25519
+signature) and `telnyx-timestamp` (Unix seconds) over `{ts}|{raw_body}`,
+verified against the account's public key. Replay window enforced.
 """
 
 from __future__ import annotations
 
-import hashlib
-import hmac
+import base64
 import json
 import time
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 from fastapi.testclient import TestClient
 
 from callmind.config import Settings
@@ -28,57 +32,140 @@ class FakeTelnyx:
         pass
 
 
-def _sig(body: bytes, secret: str) -> str:
-    return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+def _keypair() -> tuple[bytes, bytes]:
+    priv = Ed25519PrivateKey.generate()
+    pub = priv.public_key().public_bytes_raw()
+    return priv, pub
+
+
+def _sign(priv: Ed25519PrivateKey, ts: int, body: bytes) -> str:
+    msg = f"{ts}|".encode() + body
+    return base64.b64encode(priv.sign(msg)).decode()
 
 
 def _payload() -> dict:
-    return {"data": {"event_type": "call.initiated", "payload": {"call_control_id": "v2:CC-AUTH-1"}}}
+    return {
+        "data": {
+            "event_type": "call.initiated",
+            "payload": {"call_control_id": "v2:CC-AUTH-1"},
+        }
+    }
 
 
-def _boot(secret: str) -> TestClient:
+def _boot(public_key: bytes | None = None, *, tolerance: int = 300) -> TestClient:
+    pub_b64 = base64.b64encode(public_key).decode() if public_key else ""
     app.state.settings = Settings(
-        telnyx_webhook_secret=secret,
+        telnyx_webhook_public_key=pub_b64,
+        telnyx_webhook_tolerance_seconds=tolerance,
         public_ws_url="wss://voice.example.com/ws/call",
     )
     app.state.telnyx = FakeTelnyx()
     return TestClient(app)
 
 
-def test_webhook_without_secret_configured_is_rejected():
-    c = _boot(secret="")
+def test_webhook_without_public_key_is_rejected():
+    c = _boot(public_key=None)
     body = json.dumps(_payload()).encode()
     r = c.post("/telnyx/webhook", content=body)
     assert r.status_code == 503
 
 
 def test_webhook_missing_signature_rejected():
-    c = _boot("sekrit")
+    priv, pub = _keypair()
+    c = _boot(public_key=pub)
     body = json.dumps(_payload()).encode()
     r = c.post("/telnyx/webhook", content=body)
     assert r.status_code == 401
     assert app.state.telnyx.calls == []
 
 
-def test_webhook_forged_signature_rejected():
-    c = _boot("sekrit")
+def test_webhook_missing_timestamp_rejected():
+    priv, pub = _keypair()
+    c = _boot(public_key=pub)
     body = json.dumps(_payload()).encode()
-    r = c.post("/telnyx/webhook", content=body, headers={"x-telnyx-signature": "deadbeef" * 8})
+    sig = _sign(priv, int(time.time()), body)
+    r = c.post(
+        "/telnyx/webhook",
+        content=body,
+        headers={"telnyx-signature-ed25519": sig},
+    )
+    assert r.status_code == 401
+
+
+def test_webhook_forged_signature_rejected():
+    priv, pub = _keypair()
+    c = _boot(public_key=pub)
+    body = json.dumps(_payload()).encode()
+    forged_sig = base64.b64encode(b"\x00" * 64).decode()
+    r = c.post(
+        "/telnyx/webhook",
+        content=body,
+        headers={
+            "telnyx-signature-ed25519": forged_sig,
+            "telnyx-timestamp": str(int(time.time())),
+        },
+    )
+    assert r.status_code == 401
+    assert app.state.telnyx.calls == []
+
+
+def test_webhook_wrong_key_rejected():
+    priv_a, _ = _keypair()
+    _, pub_b = _keypair()
+    c = _boot(public_key=pub_b)
+    body = json.dumps(_payload()).encode()
+    sig = _sign(priv_a, int(time.time()), body)
+    r = c.post(
+        "/telnyx/webhook",
+        content=body,
+        headers={
+            "telnyx-signature-ed25519": sig,
+            "telnyx-timestamp": str(int(time.time())),
+        },
+    )
+    assert r.status_code == 401
+
+
+def test_webhook_stale_timestamp_rejected():
+    priv, pub = _keypair()
+    c = _boot(public_key=pub, tolerance=300)
+    body = json.dumps(_payload()).encode()
+    old_ts = int(time.time()) - 3600
+    sig = _sign(priv, old_ts, body)
+    r = c.post(
+        "/telnyx/webhook",
+        content=body,
+        headers={
+            "telnyx-signature-ed25519": sig,
+            "telnyx-timestamp": str(old_ts),
+        },
+    )
     assert r.status_code == 401
     assert app.state.telnyx.calls == []
 
 
 def test_webhook_valid_signature_accepted_and_answers_call():
-    c = _boot("sekrit")
+    priv, pub = _keypair()
+    c = _boot(public_key=pub)
     body = json.dumps(_payload()).encode()
-    sig = _sig(body, "sekrit")
-    r = c.post("/telnyx/webhook", content=body, headers={"x-telnyx-signature": sig})
+    ts = int(time.time())
+    sig = _sign(priv, ts, body)
+    r = c.post(
+        "/telnyx/webhook",
+        content=body,
+        headers={
+            "telnyx-signature-ed25519": sig,
+            "telnyx-timestamp": str(ts),
+        },
+    )
     assert r.status_code == 200
     for _ in range(50):
         if app.state.telnyx.calls:
             break
         time.sleep(0.02)
-    assert app.state.telnyx.calls == [("v2:CC-AUTH-1", "wss://voice.example.com/ws/call")]
+    assert app.state.telnyx.calls == [
+        ("v2:CC-AUTH-1", "wss://voice.example.com/ws/call")
+    ]
 
 
 def test_app_router_uses_configured_stub_mode():
