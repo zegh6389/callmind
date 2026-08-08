@@ -380,7 +380,6 @@ def test_session_closes_websocket_when_done(settings):
 
 def test_embeddings_batches_large_input():
     """Large input must be split by config.embedding_batch_size."""
-    import tempfile
 
     from callmind.llm.embeddings import MinimaxEmbeddings
 
@@ -424,7 +423,6 @@ def test_embeddings_batches_large_input():
 
 def test_embeddings_batches_fail_atomically():
     """If any batch fails, no partial result is returned."""
-    import tempfile
 
     from callmind.llm.embeddings import MinimaxEmbeddings
 
