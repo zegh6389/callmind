@@ -383,7 +383,9 @@ def test_llm_provider_error_falls_back_to_apology(settings):
 
     class FlakyLLM:
         async def stream_chat(self, messages, temperature=None, max_tokens=None):
-            raise RuntimeError("MiniMax LLM HTTP 503")
+            from callmind.llm.minimax import ProviderError
+
+            raise ProviderError("MiniMax LLM HTTP 503")
             yield  # unused, makes it a generator
 
     tts = StubTTS()

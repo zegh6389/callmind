@@ -21,7 +21,7 @@ from ..audio.vad import EnergyVAD, VADEventType
 from ..brain import IntentChain, MemoryStore, VectorStore
 from ..config import Settings
 from ..llm.embeddings import MinimaxEmbeddings
-from ..llm.minimax import MinimaxChat
+from ..llm.minimax import MinimaxChat, ProviderError
 from ..stt.engine import WhisperSTT
 from ..telephony.base import CallStart, CallStop, MediaChunk, TelephonyAdapter
 from ..tools.router import ToolRouter
@@ -320,6 +320,11 @@ class CallSession:
                     await self._speak_text(pending)
         except asyncio.CancelledError:
             raise
+        except ProviderError:
+            log.exception("LLM provider error")
+            apology = "Sorry, I'm having trouble reaching our service. Please try again in a moment."
+            await self._speak_text(apology)
+            reply_parts.append(apology)
         except Exception:
             log.exception("response generation failed")
         finally:
