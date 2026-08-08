@@ -90,16 +90,17 @@ def update_business(request: Request, business_id: str, body: BusinessUpdate) ->
 
 
 @router.delete("/businesses/{business_id}", status_code=204)
-def delete_business(request: Request, business_id: str) -> None:
+async def delete_business(request: Request, business_id: str) -> None:
     if not _biz(request).delete_business(business_id):
         raise HTTPException(404, "business not found")
-    # Also drop on-disk KB for that business.
+    # Drop on-disk KB without blocking the event loop on large trees.
+    import asyncio
     import shutil
     from pathlib import Path
 
     p = Path(_kb_base(request)) / business_id
     if p.exists():
-        shutil.rmtree(p, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, p, ignore_errors=True)
 
 
 # --- KB ---
