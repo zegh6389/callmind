@@ -378,6 +378,38 @@ def test_session_closes_websocket_when_done(settings):
     assert ws.closed
 
 
+def test_llm_provider_error_falls_back_to_apology(settings):
+    """MiniMax/provider error -> user hears a graceful apology, not silence."""
+
+    class FlakyLLM:
+        async def stream_chat(self, messages, temperature=None, max_tokens=None):
+            raise RuntimeError("MiniMax LLM HTTP 503")
+            yield  # unused, makes it a generator
+
+    tts = StubTTS()
+    ws = FakeWS()
+    ws.to_send = [
+        {"event": "start", "start": {"call_control_id": "c1", "from": "+15551111111", "to": "+15550000"}},
+    ]
+    session = CallSession(
+        ws=ws, adapter=StubAdapter(), settings=settings,
+        stt=StubSTT("hi there"), llm=FlakyLLM(), tts=tts,
+        embeddings=StubEmbeddings(),
+    )
+
+    async def run():
+        await session._receive_loop()
+        session._vad.reset()
+        _push_audio(session)
+        _push_silence(session)
+        if session._response_task:
+            await asyncio.wait_for(session._response_task, timeout=2.0)
+
+    asyncio.run(run())
+    spoken = " ".join(tts.spoken).lower()
+    assert "sorry" in spoken or "trouble" in spoken or "having" in spoken
+
+
 @pytest.fixture
 def settings(tmp_path):
     return Settings(
