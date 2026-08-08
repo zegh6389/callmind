@@ -53,7 +53,7 @@ class TelnyxAdapter(TelephonyAdapter):
                 return None
             seq_raw = media.get("chunk")
             try:
-                raw = base64.b64decode(payload, validate=False)
+                raw = base64.b64decode(payload, validate=True)
             except (binascii.Error, ValueError):
                 log.warning("telnyx: malformed media payload")
                 return None

@@ -182,3 +182,29 @@ def test_telnyx_media_malformed_base64_does_not_crash():
     })
     assert adapter.parse(msg) is None
     assert adapter.parse(json.dumps({"event": "media", "media": {"track": "inbound"}})) is None
+
+
+def test_twilio_media_trailing_garbage_rejected():
+    # validate=True rejects valid-prefixed-but-trailing-junk strings.
+    adapter = TwilioAdapter()
+    adapter.parse(_twilio_start_msg())
+    payload = base64.b64encode(b"\xff" * 160).decode() + "!!!"
+    msg = json.dumps({
+        "event": "media",
+        "streamSid": "MZ123",
+        "media": {"track": "inbound", "chunk": "11", "payload": payload},
+    })
+    assert adapter.parse(msg) is None
+
+
+def test_telnyx_media_trailing_garbage_rejected():
+    adapter = TelnyxAdapter()
+    adapter.parse(_telnyx_start_msg())
+    payload = base64.b64encode(b"\xff" * 160).decode() + "!!!"
+    msg = json.dumps({
+        "event": "media",
+        "sequence_number": "6",
+        "media": {"track": "inbound", "payload": payload},
+        "stream_id": "ST-9",
+    })
+    assert adapter.parse(msg) is None
