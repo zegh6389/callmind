@@ -20,13 +20,11 @@ _DATE_TOKEN_RE = re.compile(
 
 
 def _extract_phone(text: str) -> str | None:
-    m = _PHONE_RE.search(text)
-    if not m:
-        return None
-    digits = re.sub(r"\D", "", m.group(1))
-    if not 10 <= len(digits) <= 15:
-        return None
-    return digits
+    for m in _PHONE_RE.finditer(text):
+        digits = re.sub(r"\D", "", m.group(1))
+        if 10 <= len(digits) <= 15:
+            return digits
+    return None
 
 
 def _extract_time(text: str) -> str | None:

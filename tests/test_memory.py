@@ -36,6 +36,10 @@ def test_recent_messages_no_phone(store):
 def test_end_conversation(store):
     store.start_conversation("c1", "b1", "+15551111111")
     store.end_conversation("c1", summary="a polite greeting")
+    sess = store.get_session("c1")
+    assert sess is not None
+    assert sess["ended_at"] is not None
+    assert sess["summary"] == "a polite greeting"
 
 
 def test_append_message_requires_existing_call(store):

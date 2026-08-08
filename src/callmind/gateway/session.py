@@ -107,15 +107,13 @@ class CallSession:
         self._response_task: asyncio.Task | None = None
         self._sender_task: asyncio.Task | None = None
         self._seq = 0
+        self._greeting_sent = False
 
     async def run(self) -> None:
         self._sender_task = asyncio.create_task(self._sender_loop())
         if start := self.adapter.start_message():
             await self.ws.send_json(start)
         try:
-            greeting = self.business_greeting or self.settings.greeting
-            if greeting:
-                self._start_response_text(greeting)
             await self._receive_loop()
         finally:
             await self.close()
@@ -139,6 +137,11 @@ class CallSession:
                 self._resolve_business()
                 self.memory.start_conversation(self.call_id, self.settings.business_id, self.from_number)
                 self._seed_history()
+                if not self._greeting_sent:
+                    self._greeting_sent = True
+                    greeting = self.business_greeting or self.settings.greeting
+                    if greeting:
+                        self._start_response_text(greeting)
                 log.info("call started id=%s from=%s", self.call_id, self.from_number)
             elif isinstance(event, MediaChunk):
                 self._on_audio(event.payload)
@@ -153,7 +156,7 @@ class CallSession:
         if not row:
             return
         self._business = row
-        if row.get("escalation_confidence"):
+        if row.get("escalation_confidence") is not None:
             self._escalation_threshold = float(row["escalation_confidence"])
 
     def _seed_history(self) -> None:

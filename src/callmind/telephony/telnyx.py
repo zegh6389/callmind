@@ -53,7 +53,7 @@ class TelnyxAdapter(TelephonyAdapter):
                 return None
             seq_raw = media.get("chunk")
             try:
-                raw = base64.b64decode(payload, validate=False)
+                raw = base64.b64decode(payload, validate=True)
             except (binascii.Error, ValueError):
                 log.warning("telnyx: malformed media payload")
                 return None
@@ -83,19 +83,10 @@ class TelnyxAdapter(TelephonyAdapter):
         return {"event": "clear"}
 
     def start_message(self) -> dict | None:
-        """Client->server 'start' handshake, required by Telnyx Media Streaming.
+        """No client->server handshake required.
 
-        Schema per telnyx media-streaming docs; sent once right after the
-        gateway accepts the WebSocket (before any media events).
+        Telnyx pushes connected+start events to the WebSocket server;
+        bidirectional RTP settings travel on the answer API call, so the
+        client does not negotiate any setup frame.
         """
-        return {
-            "event": "start",
-            "start": {
-                "bidirectional": "rtp",
-                "stream_id": self._stream_id or "callmind-stream",
-                "media_codec": "PCMU",
-                "media_sample_rate": 8000,
-                "media_bit_rate": 64000,
-                "socket": "callmind",
-            },
-        }
+        return None

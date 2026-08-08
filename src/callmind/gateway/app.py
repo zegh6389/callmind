@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
+import base64
+import binascii
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 
 from ..admin.router import router as admin_router
@@ -73,7 +76,7 @@ async def lifespan(app: FastAPI):
     app.state.llm = llm
     app.state.tts = tts
     app.state.embeddings = embeddings
-    app.state.tool_router = ToolRouter()
+    app.state.tool_router = ToolRouter(stub_mode=settings.tool_stub_mode)
     app.state.telnyx = TelnyxAPI(
         api_key=settings.telnyx_api_key,
         base_url=settings.telnyx_api_base,
@@ -100,21 +103,44 @@ async def health() -> dict:
 app.include_router(admin_router)
 
 
+def _verify_telnyx_signature(body: bytes, sig_b64: str, ts_str: str, public_key_b64: str, tolerance: int) -> bool:
+    if not (sig_b64 and ts_str and public_key_b64):
+        return False
+    try:
+        ts = int(ts_str)
+    except ValueError:
+        return False
+    if abs(int(time.time()) - ts) > tolerance:
+        return False
+    try:
+        pub_bytes = base64.b64decode(public_key_b64, validate=True)
+        sig = base64.b64decode(sig_b64, validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    if len(pub_bytes) != 32 or len(sig) != 64:
+        return False
+    try:
+        pub = Ed25519PublicKey.from_public_bytes(pub_bytes)
+        pub.verify(sig, f"{ts}|".encode() + body)
+    except (InvalidSignature, ValueError):
+        return False
+    return True
+
+
 @app.post("/telnyx/webhook")
 async def telnyx_webhook(request: Request) -> dict:
     body = await request.body()
     settings = app.state.settings
-    secret = settings.telnyx_webhook_secret
-    if not secret:
-        log.error("telnyx_webhook_secret not configured; rejecting webhook")
+    public_key = settings.telnyx_webhook_public_key
+    if not public_key:
+        log.error("telnyx_webhook_public_key not configured; rejecting webhook")
         raise HTTPException(
             503,
-            "webhook not enabled: set telnyx_webhook_secret to receive Telnyx events",
+            "webhook not enabled: set telnyx_webhook_public_key to receive Telnyx events",
         )
-    signature = request.headers.get("x-telnyx-signature", "")
-    if not signature or not hmac.compare_digest(
-        signature, hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    ):
+    sig = request.headers.get("telnyx-signature-ed25519", "")
+    ts = request.headers.get("telnyx-timestamp", "")
+    if not _verify_telnyx_signature(body, sig, ts, public_key, settings.telnyx_webhook_tolerance_seconds):
         log.warning("rejected telnyx webhook: bad or missing signature")
         raise HTTPException(401, "invalid webhook signature")
 

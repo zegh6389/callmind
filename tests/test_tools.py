@@ -86,10 +86,13 @@ def test_account_unavailable_when_stub_disabled():
 
 
 def test_router_dispatch_booking(router):
+    from datetime import datetime, timedelta
+
+    future = (datetime.now(UTC).date() + timedelta(days=7)).isoformat()
     res = await_(
         router.dispatch,
         "booking",
-        {"title": "X", "date": "2026-08-15", "time": "14:00", "caller_name": "A"},
+        {"title": "X", "date": future, "time": "14:00", "caller_name": "A"},
         call_id="c1",
         business_id="b1",
     )
@@ -125,6 +128,15 @@ def test_router_phone_not_lucky_number(router):
 def test_router_phone_accepts_plus_country(router):
     params = router.extract_params("account_status", "that's +1 416 555-0199")
     assert params.get("caller_phone") == "14165550199"
+
+
+def test_router_phone_finds_valid_after_short_invalid(router):
+    # If the first candidate is too short, _extract_phone should keep scanning
+    # until it finds a valid 10-15 digit phone.
+    params = router.extract_params(
+        "account_status", "My order id is 1234567, call me at 555-123-4567"
+    )
+    assert params.get("caller_phone") == "5551234567"
 
 
 def test_router_extract_returns_empty_for_unknown(router):
