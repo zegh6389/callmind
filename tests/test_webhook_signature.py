@@ -79,3 +79,14 @@ def test_webhook_valid_signature_accepted_and_answers_call():
             break
         time.sleep(0.02)
     assert app.state.telnyx.calls == [("v2:CC-AUTH-1", "wss://voice.example.com/ws/call")]
+
+
+def test_app_router_uses_configured_stub_mode():
+    from callmind.config import Settings
+    from callmind.gateway.app import app
+    from callmind.tools.router import ToolRouter
+
+    for setting in (True, False):
+        app.state.settings = Settings(tool_stub_mode=setting)
+        app.state.tool_router = ToolRouter(stub_mode=app.state.settings.tool_stub_mode)
+        assert app.state.tool_router._tools["account_status"].stub_mode is setting

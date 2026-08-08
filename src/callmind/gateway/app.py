@@ -73,7 +73,7 @@ async def lifespan(app: FastAPI):
     app.state.llm = llm
     app.state.tts = tts
     app.state.embeddings = embeddings
-    app.state.tool_router = ToolRouter()
+    app.state.tool_router = ToolRouter(stub_mode=settings.tool_stub_mode)
     app.state.telnyx = TelnyxAPI(
         api_key=settings.telnyx_api_key,
         base_url=settings.telnyx_api_base,
