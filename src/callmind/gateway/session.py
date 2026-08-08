@@ -102,7 +102,7 @@ class CallSession:
         self._speech_chunks: list[np.ndarray] = []
         self._parked_utterance: np.ndarray | None = None
         self._frame_leftover = b""
-        self._send_queue: asyncio.Queue[tuple[str, bytes | None]] = asyncio.Queue()
+        self._send_queue: asyncio.Queue[tuple[str, bytes | None]] = asyncio.Queue(maxsize=200)
         self._cancel = asyncio.Event()
         self._response_task: asyncio.Task | None = None
         self._sender_task: asyncio.Task | None = None
