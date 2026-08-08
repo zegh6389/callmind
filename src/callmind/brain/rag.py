@@ -92,8 +92,22 @@ class VectorStore:
         q_norm = float(np.linalg.norm(q))
         if q_norm == 0.0:
             return []
-        scores = (self._vectors @ q) / (
-            np.linalg.norm(self._vectors, axis=1) * q_norm + 1e-12
-        )
-        idx = np.argsort(scores)[::-1][:top_k]
-        return [(self._chunks[i]["text"], float(scores[i]), self._chunks[i].get("source", "")) for i in idx]
+        row_norms = np.linalg.norm(self._vectors, axis=1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            scores = (self._vectors @ q) / (row_norms * q_norm + 1e-12)
+        scores = np.where(np.isfinite(scores), scores, -np.inf)
+        order = np.argsort(-scores)
+        out: list[tuple[str, float, str]] = []
+        for i in order:
+            if len(out) >= top_k:
+                break
+            if scores[i] == -np.inf:
+                continue
+            out.append(
+                (
+                    self._chunks[i]["text"],
+                    float(scores[i]),
+                    self._chunks[i].get("source", ""),
+                )
+            )
+        return out

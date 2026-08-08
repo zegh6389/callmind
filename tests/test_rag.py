@@ -63,6 +63,19 @@ def test_vector_store_zero_query_returns_empty_not_nan(tmp_path):
     assert not any(isinstance(h[1], float) and math.isnan(h[1]) for h in [])
 
 
+def test_vector_store_search_zero_row_corpus_returns_empty(tmp_path):
+    import math
+
+    # A row with zero vector in the corpus would produce NaN scores; we
+    # filter them out rather than return garbage.
+    store = VectorStore("biz", str(tmp_path))
+    store.add(["bad", "good"], [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], source="t")
+    hits = store.search([1.0, 0.0, 0.0], top_k=2)
+    assert [h[0] for h in hits] == ["good"]
+    for _, score, _ in hits:
+        assert not math.isnan(score)
+
+
 def test_cosine_identical():
     a = np.array([1.0, 2.0, 3.0])
     assert abs(cosine(a, a) - 1.0) < 1e-6
