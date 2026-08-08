@@ -96,6 +96,8 @@ class VectorStore:
         with np.errstate(divide="ignore", invalid="ignore"):
             scores = (self._vectors @ q) / (row_norms * q_norm + 1e-12)
         scores = np.where(np.isfinite(scores), scores, -np.inf)
+        # Drop rows whose stored vector is itself zero (no signal to match).
+        scores = np.where(row_norms > 0, scores, -np.inf)
         order = np.argsort(-scores)
         out: list[tuple[str, float, str]] = []
         for i in order:
