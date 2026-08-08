@@ -87,7 +87,7 @@ class CallSession:
 
         self.intent_chain = IntentChain(llm)
         self.memory = MemoryStore(settings.memory_db_path)
-        self.kb = VectorStore(settings.business_id, settings.kb_dir)
+        self.kb: VectorStore | None = None
         self.tool_router = tool_router or ToolRouter(stub_mode=self.settings.tool_stub_mode)
 
         self.history: deque[tuple[str, str]] = deque(maxlen=settings.memory_window)
@@ -156,6 +156,7 @@ class CallSession:
         if not row:
             return
         self._business = row
+        self.kb = VectorStore(self.settings.business_id, self.settings.kb_dir)
         if row.get("escalation_confidence") is not None:
             self._escalation_threshold = float(row["escalation_confidence"])
 
@@ -268,7 +269,7 @@ class CallSession:
             elif result and not result.success:
                 log.warning("tool %s failed: %s", intent.label, result.error)
                 rag_context = f"[Tool {intent.label} failed: {result.error}]"
-        if intent and intent.label == "faq" and not self.kb.is_empty():
+        if intent and intent.label == "faq" and self.kb is not None and not self.kb.is_empty():
             rag_context = await self._retrieve_context(user_text)
         await self._speak_llm_reply(user_text, rag_context=rag_context)
 
