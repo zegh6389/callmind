@@ -77,7 +77,7 @@ def test_webhook_missing_signature_rejected():
 
 
 def test_webhook_missing_timestamp_rejected():
-    _, pub = _keypair()
+    priv, pub = _keypair()
     c = _boot(public_key=pub)
     body = json.dumps(_payload()).encode()
     sig = _sign(priv, int(time.time()), body)
@@ -124,7 +124,7 @@ def test_webhook_wrong_key_rejected():
 
 
 def test_webhook_stale_timestamp_rejected():
-    _, pub = _keypair()
+    priv, pub = _keypair()
     c = _boot(public_key=pub, tolerance=300)
     body = json.dumps(_payload()).encode()
     old_ts = int(time.time()) - 3600
@@ -142,7 +142,7 @@ def test_webhook_stale_timestamp_rejected():
 
 
 def test_webhook_valid_signature_accepted_and_answers_call():
-    _, pub = _keypair()
+    priv, pub = _keypair()
     c = _boot(public_key=pub)
     body = json.dumps(_payload()).encode()
     ts = int(time.time())
